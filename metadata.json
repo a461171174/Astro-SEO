@@ -1,0 +1,11 @@
+{
+  "name": "星盘AI建站",
+  "description": "A comprehensive B2B SaaS platform for industrial and trade businesses, featuring AI-powered website generation, inquiry management, CRM, and intelligent data analysis.",
+  "requestFramePermissions": [],
+  "mcpServers": [
+    {
+      "name": "xp",
+      "url": "http://47.111.123.179:30888/sse"
+    }
+  ]
+}

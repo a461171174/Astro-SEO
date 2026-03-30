@@ -1,0 +1,329 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product available in the store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["草稿", "已上架", "存档"] },
+        "vendor": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "collections": { "type": "array", "items": { "type": "string" } },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "status"]
+    },
+    "Collection": {
+      "title": "Collection",
+      "description": "A group of products",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "image": { "type": "string" },
+        "productIds": { "type": "array", "items": { "type": "string" } },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title"]
+    },
+    "Blog": {
+      "title": "Blog",
+      "description": "A blog post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "author": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "image": { "type": "string" },
+        "status": { "type": "string", "enum": ["草稿", "已发布"] },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "status"]
+    },
+    "BlogSet": {
+      "title": "BlogSet",
+      "description": "A collection of blog posts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "blogIds": { "type": "array", "items": { "type": "string" } },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title"]
+    },
+    "Page": {
+      "title": "Page",
+      "description": "A custom page",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "template": { "type": "string" },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the system",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "editor", "viewer"] }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Media": {
+      "title": "Media",
+      "description": "A media file (image or video)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["image", "video"] },
+        "size": { "type": "number" },
+        "mimeType": { "type": "string" },
+        "altText": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["url", "name", "type"]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A single item in a navigation menu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "url": { "type": "string" },
+        "type": { "type": "string", "enum": ["link", "product", "collection", "blog", "page"] },
+        "referenceId": { "type": "string" },
+        "children": { "type": "array", "items": { "$ref": "MenuItem" } }
+      },
+      "required": ["id", "label", "url", "type"]
+    },
+    "Menu": {
+      "title": "Menu",
+      "description": "A navigation menu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "handle": { "type": "string" },
+        "items": { "type": "array", "items": { "$ref": "MenuItem" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "handle"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer of the store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "email": { "type": "string" },
+        "country": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email"]
+    },
+    "Inquiry": {
+      "title": "Inquiry",
+      "description": "A customer inquiry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "email": { "type": "string" },
+        "productName": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["待处理", "已回复", "已关闭"] },
+        "date": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerName", "email", "message"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "A staff member with specific permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "staff"] },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "role", "permissions"]
+    },
+    "Theme": {
+      "title": "Theme",
+      "description": "A website theme configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "lastModified": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "hasUpdate": { "type": "boolean" },
+        "isAI": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "sections": { "type": "array", "items": { "type": "object" } },
+        "styles": { "type": "object" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "version", "sections"]
+    },
+    "BlogTopic": {
+      "title": "BlogTopic",
+      "description": "A suggested topic for a blog post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["待处理", "已生成", "已忽略"] },
+        "source": { "type": "string", "enum": ["AI", "人工"] },
+        "targetProductIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "status", "source"]
+    },
+    "BlogTask": {
+      "title": "BlogTask",
+      "description": "A task for generating a blog post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "topicId": { "type": "string" },
+        "productIds": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["待执行", "执行中", "已完成", "失败"] },
+        "scheduledAt": { "type": "string", "format": "date-time" },
+        "resultBlogId": { "type": "string" },
+        "error": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["status", "scheduledAt"]
+    },
+    "SEOConfig": {
+      "title": "SEOConfig",
+      "description": "Global SEO generation settings and strategy",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "strategy": { "type": "string" },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "brandName": { "type": "string" },
+        "excludedKeywords": { "type": "string" },
+        "storeInfo": { "type": "string" },
+        "targetMarket": { "type": "string" },
+        "targetLanguage": { "type": "string" },
+        "keywordCount": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["strategy", "keywords"]
+    }
+  },
+  "firestore": {
+    "products": {
+      "schema": { "$ref": "Product" },
+      "description": "Collection of products"
+    },
+    "collections": {
+      "schema": { "$ref": "Collection" },
+      "description": "Collection of product collections"
+    },
+    "blogs": {
+      "schema": { "$ref": "Blog" },
+      "description": "Collection of blog posts"
+    },
+    "blogSets": {
+      "schema": { "$ref": "BlogSet" },
+      "description": "Collection of blog sets"
+    },
+    "pages": {
+      "schema": { "$ref": "Page" },
+      "description": "Collection of custom pages"
+    },
+    "users": {
+      "schema": { "$ref": "User" },
+      "description": "Collection of user profiles"
+    },
+    "media": {
+      "schema": { "$ref": "Media" },
+      "description": "Collection of media files"
+    },
+    "menus": {
+      "schema": { "$ref": "Menu" },
+      "description": "Collection of navigation menus"
+    },
+    "customers": {
+      "schema": { "$ref": "Customer" },
+      "description": "Collection of customers"
+    },
+    "inquiries": {
+      "schema": { "$ref": "Inquiry" },
+      "description": "Collection of inquiries"
+    },
+    "staff": {
+      "schema": { "$ref": "Staff" },
+      "description": "Collection of staff members"
+    },
+    "themes": {
+      "schema": { "$ref": "Theme" },
+      "description": "Collection of website themes"
+    },
+    "blogTopics": {
+      "schema": { "$ref": "BlogTopic" },
+      "description": "Collection of blog topics"
+    },
+    "blogTasks": {
+      "schema": { "$ref": "BlogTask" },
+      "description": "Collection of blog generation tasks"
+    },
+    "seoConfigs": {
+      "schema": { "$ref": "SEOConfig" },
+      "description": "Collection of SEO configurations"
+    }
+  }
+}

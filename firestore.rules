@@ -1,0 +1,418 @@
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Fields:
+//   - uid: string (required)
+//   - email: string (required)
+//   - displayName: string (optional)
+//   - role: string (required, enum: ['admin', 'editor', 'viewer'])
+//
+// Collection: products
+// Fields:
+//   - title: string (required)
+//   - summary: string
+//   - description: string
+//   - status: string (enum: ['草稿', '已上架', '存档'])
+//   - vendor: string
+//   - category: string
+//   - tags: list
+//   - collections: list
+//   - seoTitle: string
+//   - seoDescription: string
+//   - seoUrl: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: collections
+// Fields:
+//   - title: string (required)
+//   - description: string
+//   - image: string
+//   - productIds: list
+//   - seoTitle: string
+//   - seoDescription: string
+//   - seoUrl: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: blogs
+// Fields:
+//   - title: string (required)
+//   - content: string
+//   - author: string
+//   - tags: list
+//   - image: string
+//   - status: string (enum: ['草稿', '已发布'])
+//   - seoTitle: string
+//   - seoDescription: string
+//   - seoUrl: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: blogSets
+// Fields:
+//   - title: string (required)
+//   - description: string
+//   - blogIds: list
+//   - seoTitle: string
+//   - seoDescription: string
+//   - seoUrl: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: pages
+// Fields:
+//   - title: string (required)
+//   - content: string
+//   - template: string
+//   - seoTitle: string
+//   - seoDescription: string
+//   - seoUrl: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: media
+// Fields:
+//   - url: string (required)
+//   - name: string (required)
+//   - type: string (required, enum: ['image', 'video'])
+//   - size: number
+//   - mimeType: string
+//   - altText: string
+//   - createdAt: timestamp
+//
+// Collection: menus
+// Fields:
+//   - title: string (required)
+//   - handle: string (required)
+//   - items: list (of MenuItem objects)
+//   - updatedAt: timestamp
+//
+// Collection: customers
+// Fields:
+//   - name: string (required)
+//   - email: string (required)
+//   - company: string
+//   - country: string
+//   - createdAt: timestamp
+//
+// Collection: inquiries
+// Fields:
+//   - customerName: string (required)
+//   - email: string (required)
+//   - message: string (required)
+//   - status: string (enum: ['待处理', '已回复', '已关闭'])
+//   - date: timestamp
+//
+// Collection: staff
+// Fields:
+//   - name: string (required)
+//   - email: string (required)
+//   - role: string (required, enum: ['admin', 'staff'])
+//   - permissions: list (of strings)
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: blogTopics
+// Fields:
+//   - title: string (required)
+//   - keywords: list
+//   - status: string (required, enum: ['待处理', '已生成', '已忽略'])
+//   - source: string (required, enum: ['AI', '人工'])
+//   - targetProductIds: list
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: blogTasks
+// Fields:
+//   - topicId: string
+//   - productIds: list
+//   - status: string (required, enum: ['待执行', '执行中', '已完成', '失败'])
+//   - scheduledAt: timestamp (required)
+//   - resultBlogId: string
+//   - error: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
+// Collection: seoConfigs
+// Fields:
+//   - strategy: string (required)
+//   - keywords: list (required)
+//   - brandName: string
+//   - mainKeywords: string
+//   - targetMarket: string
+//   - targetLanguage: string
+//   - keywordCount: number
+//   - updatedAt: timestamp
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "huangjcyyds@gmail.com") ||
+          (exists(/databases/$(database)/documents/staff/$(request.auth.uid)) && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function isEditor() {
+      return isAuthenticated() &&
+        (
+          isAdmin() ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'editor')
+        );
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'editor', 'viewer'];
+    }
+
+    function isValidProduct(data) {
+      return hasRequiredFields(['title', 'status']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.status in ['草稿', '已上架', '存档'];
+    }
+
+    function isValidCollection(data) {
+      return hasRequiredFields(['title']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500;
+    }
+
+    function isValidBlog(data) {
+      return hasRequiredFields(['title', 'status']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.status in ['草稿', '已发布'];
+    }
+
+    function isValidBlogSet(data) {
+      return hasRequiredFields(['title']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500;
+    }
+
+    function isValidPage(data) {
+      return hasRequiredFields(['title']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500;
+    }
+
+    function isValidMedia(data) {
+      return hasRequiredFields(['url', 'name', 'type']) &&
+             data.url is string && data.url.size() > 0 &&
+             data.name is string && data.name.size() > 0 &&
+             data.type in ['image', 'video'];
+    }
+
+    function isValidMenu(data) {
+      return hasRequiredFields(['title', 'handle']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             data.handle is string && data.handle.size() > 0 && data.handle.size() < 500;
+    }
+
+    function isValidCustomer(data) {
+      return hasRequiredFields(['name', 'email']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.email is string && isValidEmail(data.email);
+    }
+
+    function isValidInquiry(data) {
+      return hasRequiredFields(['customerName', 'email', 'message']) &&
+             data.customerName is string && data.customerName.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.message is string && data.message.size() > 0;
+    }
+
+    function isValidStaff(data) {
+      return hasRequiredFields(['name', 'email', 'role', 'permissions']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'staff'] &&
+             data.permissions is list;
+    }
+
+    function isValidTheme(data) {
+      return hasRequiredFields(['name', 'version', 'sections']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.version is string &&
+             data.sections is list &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('lastModified' in data) || data.lastModified is string) &&
+             (!('updatedAt' in data) || data.updatedAt is string) &&
+             (!('thumbnail' in data) || data.thumbnail is string) &&
+             (!('isAI' in data) || data.isAI is bool) &&
+             (!('hasUpdate' in data) || data.hasUpdate is bool) &&
+             (!('styles' in data) || data.styles is map);
+    }
+
+    function isValidBlogTopic(data) {
+      return hasRequiredFields(['title', 'status', 'source']) &&
+             data.title is string && data.title.size() > 0 &&
+             data.status in ['待处理', '执行中', '已生成', '已忽略'] &&
+             data.source in ['AI', '人工'];
+    }
+
+    function isValidBlogTask(data) {
+      return hasRequiredFields(['status', 'scheduledAt']) &&
+             data.status in ['待执行', '执行中', '已完成', '失败'];
+    }
+
+    function isValidSEOConfig(data) {
+      return hasRequiredFields(['strategy', 'keywords']) &&
+             data.strategy is string &&
+             data.keywords is list;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) &&
+                    (
+                      request.resource.data.role == 'viewer' || 
+                      request.resource.data.role == 'editor' || 
+                      (request.resource.data.role == 'admin' && request.auth.token.email == "huangjcyyds@gmail.com")
+                    );
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
+    }
+
+    match /themes/{themeId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidTheme(request.resource.data);
+      allow update: if isEditor() && isValidTheme(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidProduct(request.resource.data);
+      allow update: if isEditor() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /collections/{collectionId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidCollection(request.resource.data);
+      allow update: if isEditor() && isValidCollection(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /blogs/{blogId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidBlog(request.resource.data);
+      allow update: if isEditor() && isValidBlog(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /blogSets/{setId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidBlogSet(request.resource.data);
+      allow update: if isEditor() && isValidBlogSet(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /pages/{pageId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidPage(request.resource.data);
+      allow update: if isEditor() && isValidPage(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /media/{mediaId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMedia(request.resource.data);
+      allow update: if isEditor() && isValidMedia(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /menus/{menuId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidMenu(request.resource.data);
+      allow update: if isEditor() && isValidMenu(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidCustomer(request.resource.data);
+      allow update: if isEditor() && isValidCustomer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /inquiries/{inquiryId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidInquiry(request.resource.data);
+      allow update: if isEditor() && isValidInquiry(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidStaff(request.resource.data);
+    }
+
+    match /blogTopics/{topicId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidBlogTopic(request.resource.data);
+      allow update: if isEditor() && isValidBlogTopic(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /blogTasks/{taskId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidBlogTask(request.resource.data);
+      allow update: if isEditor() && isValidBlogTask(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /seoConfigs/{configId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor() && isValidSEOConfig(request.resource.data);
+      allow update: if isEditor() && isValidSEOConfig(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
