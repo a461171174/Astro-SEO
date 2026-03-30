@@ -2709,6 +2709,20 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-blue-500 transition-all"
                     />
                   </div>
+
+                  <div>
+                    <label className="block text-base font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
+                      <ICONS.AlertTriangle className="w-3 h-3" />
+                      排除词 (AI 生成内容将避开这些词)
+                    </label>
+                    <input 
+                      type="text"
+                      placeholder="例如: 便宜, 二手"
+                      value={excludedKeywords}
+                      onChange={(e) => setExcludedKeywords(e.target.value)}
+                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-blue-500 transition-all"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 mb-4 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
@@ -2834,20 +2848,6 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           {isAnalyzing ? '正在生成关键词...' : '暂无推荐关键词，请先生成策略。'}
                         </div>
                       )}
-
-                      <div className="mt-6 pt-6 border-t border-slate-100">
-                        <label className="block text-base font-bold text-slate-500 uppercase mb-1.5 flex items-center gap-2">
-                          <ICONS.AlertTriangle className="w-3 h-3" />
-                          排除词 (AI 生成内容将避开这些词)
-                        </label>
-                        <input 
-                          type="text"
-                          placeholder="例如: 便宜, 二手"
-                          value={excludedKeywords}
-                          onChange={(e) => setExcludedKeywords(e.target.value)}
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500 transition-all"
-                        />
-                      </div>
                     </div>
 
                     <div className="space-y-4 mt-8">
