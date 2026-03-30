@@ -20,7 +20,7 @@ interface SEODashboardProps {
   blogs: Blog[];
   blogSets: BlogSet[];
   pages: Page[];
-  initialTab?: 'audit' | 'ai' | 'tracking' | 'blog';
+  initialTab?: 'audit' | 'ai' | 'tracking' | 'blog' | 'fix';
   initialMode?: 'chat' | 'list';
   onTabChange?: (tab: string) => void;
 }
@@ -163,10 +163,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const [customPrompts, setCustomPrompts] = useState(DEFAULT_PROMPTS);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const [editingPrompts, setEditingPrompts] = useState(DEFAULT_PROMPTS);
-  const [selectedModel, setSelectedModel] = useState("gemini-3-flash-preview");
-  const [editingModel, setEditingModel] = useState("gemini-3-flash-preview");
 
-  const [activeTab, setActiveTab] = useState<'audit' | 'ai' | 'tracking' | 'blog'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'audit' | 'ai' | 'tracking' | 'blog' | 'fix'>(initialTab);
   
   useEffect(() => {
     setActiveTab(initialTab);
@@ -192,11 +190,6 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           };
           setCustomPrompts(mergedPrompts);
           setEditingPrompts(mergedPrompts);
-          if (data.model) {
-            setSelectedModel(data.model);
-            setEditingModel(data.model);
-            geminiService.setModel(data.model);
-          }
         }
       } catch (error) {
         console.error('Failed to load prompts:', error);
@@ -461,13 +454,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
   const handleSavePrompts = async () => {
     try {
-      await setDoc(doc(db, 'seoConfigs', 'prompts'), {
-        ...editingPrompts,
-        model: editingModel
-      });
+      await setDoc(doc(db, 'seoConfigs', 'prompts'), editingPrompts);
       setCustomPrompts(editingPrompts);
-      setSelectedModel(editingModel);
-      geminiService.setModel(editingModel);
       setIsPromptModalOpen(false);
     } catch (error) {
       console.error('Failed to save prompts:', error);
@@ -1660,12 +1648,12 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             </button>
                             <button 
                               onClick={() => {
-                                setActiveTab('ai');
+                                setActiveTab('fix');
                                 setAiMode('list');
                                 if (issue.targetTab) setAiTab(issue.targetTab);
                                 setFilterIds(issue.affectedItems?.map(item => item.id) || null);
                                 setFilterStatus('all');
-                                onTabChange?.('SEO管理');
+                                onTabChange?.('SEO处理');
                               }}
                               className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-md shadow-blue-500/20"
                             >
@@ -1766,13 +1754,13 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </button>
                 <button 
                   onClick={() => {
-                    setActiveTab('ai');
+                    setActiveTab('fix');
                     setAiMode('list');
                     if (selectedIssue.targetTab) setAiTab(selectedIssue.targetTab);
                     setFilterIds(selectedIssue.affectedItems?.map(item => item.id) || null);
                     setFilterStatus('all');
                     setSelectedIssue(null);
-                    onTabChange?.('SEO管理');
+                    onTabChange?.('SEO处理');
                   }}
                   className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
                 >
@@ -1786,6 +1774,35 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
       </AnimatePresence>
     </div>
   );
+
+  const renderFixTab = () => {
+    // Similar to renderAiTab but focused on fixing
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between bg-blue-50/50 p-4 rounded-2xl border border-blue-100 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+              <ICONS.Zap className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900">问题修复模式</h3>
+              <p className="text-xs text-slate-500">正在针对检测出的 {filterIds?.length || '全部'} 个问题进行专项优化</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              setActiveTab('audit');
+              onTabChange?.('SEO检测');
+            }}
+            className="px-4 py-2 bg-white text-slate-600 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-all"
+          >
+            返回检测报告
+          </button>
+        </div>
+        {renderAiTab()}
+      </div>
+    );
+  };
 
   const renderTrackingTab = () => (
     <div className="space-y-8 pb-12">
@@ -2107,14 +2124,15 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           </div>
           <button 
             onClick={() => {
-              setActiveTab('ai');
+              setActiveTab('fix');
+              onTabChange?.('SEO处理');
               setAiMode('list');
               setFilterStatus('needs_optimization');
             }}
             className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black shadow-lg hover:scale-105 transition-all flex items-center gap-3 whitespace-nowrap"
           >
             <ICONS.Zap className="w-5 h-5" />
-            立即去 SEO 管理优化
+            立即处理
           </button>
         </div>
       )}
@@ -2355,7 +2373,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     return (
       <div className="space-y-4">
         <AnimatePresence>
-          {showManagementOnboarding && (
+          {showManagementOnboarding && activeTab !== 'fix' && (
             <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-[2px]">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -3392,38 +3410,6 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
-                  {/* Global Model Configuration */}
-                  <div className="space-y-4 p-6 bg-slate-50 rounded-[24px] border border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
-                        <ICONS.Zap className="w-4 h-4" />
-                      </div>
-                      <h4 className="font-bold text-slate-900">全局模型配置</h4>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {[
-                        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (推荐)', desc: '速度快，成本低，适合日常 SEO 优化' },
-                        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '推理能力更强，适合复杂策略生成' }
-                      ].map((m) => (
-                        <button
-                          key={m.id}
-                          onClick={() => setEditingModel(m.id)}
-                          className={`p-4 rounded-2xl border-2 text-left transition-all ${
-                            editingModel === m.id 
-                              ? 'border-blue-500 bg-blue-50/50' 
-                              : 'border-slate-200 bg-white hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="font-bold text-slate-900">{m.name}</span>
-                            {editingModel === m.id && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
-                          </div>
-                          <p className="text-xs text-slate-500 leading-relaxed">{m.desc}</p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   {/* SEO Prompt */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -3698,7 +3684,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-4">
-              {activeTab === 'ai' && aiMode === 'list' && filterIds && (
+              {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'list' && filterIds && (
                 <>
                   <button 
                     onClick={() => {
@@ -3721,20 +3707,19 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </>
               )}
               <h1 className="text-2xl font-bold text-slate-900">
-                {activeTab === 'audit' ? 'SEO检测' : activeTab === 'ai' ? (aiMode === 'chat' ? 'SEO策略' : 'SEO管理') : '效果分析'}
+                {activeTab === 'audit' ? 'SEO检测' : activeTab === 'ai' ? (aiMode === 'chat' ? 'SEO策略' : 'SEO管理') : activeTab === 'fix' ? 'SEO处理' : '效果分析'}
               </h1>
             </div>
             <p className="text-sm text-slate-500">
-              {activeTab === 'audit' ? '全方位的 SEO 诊断与优化建议。' : activeTab === 'ai' ? (aiMode === 'chat' ? 'AI 驱动的 SEO 全局优化。' : '批量管理与优化您的站点内容。') : '实时监控您的搜索排名与流量表现。'}
+              {activeTab === 'audit' ? '全方位的 SEO 诊断与优化建议。' : activeTab === 'ai' ? (aiMode === 'chat' ? 'AI 驱动的 SEO 全局优化。' : '批量管理与优化您的站点内容。') : activeTab === 'fix' ? '针对检测出的问题进行针对性优化。' : '实时监控您的搜索排名与流量表现。'}
             </p>
           </div>
 
           <div className="flex items-center gap-3">
-            {activeTab === 'ai' && aiMode === 'chat' && (
+            {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'chat' && (
               <button 
                 onClick={() => {
                   setEditingPrompts(customPrompts);
-                  setEditingModel(selectedModel);
                   setIsPromptModalOpen(true);
                 }}
                 className="px-5 py-2.5 bg-white text-blue-600 rounded-2xl font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-50 transition-all shadow-sm whitespace-nowrap"
@@ -3743,7 +3728,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 <span>提示词管理</span>
               </button>
             )}
-            {activeTab === 'ai' && aiMode === 'list' && (
+            {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'list' && (
               <button 
                 onClick={() => setIsImportModalOpen(true)}
                 className="px-5 py-2.5 bg-white text-blue-600 rounded-2xl font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-50 transition-all shadow-sm whitespace-nowrap"
@@ -3755,7 +3740,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           </div>
         </div>
 
-          {activeTab === 'ai' && (
+          {(activeTab === 'ai' || activeTab === 'fix') && (
             <div className="relative">
               <div className="flex items-center gap-2">
               </div>
@@ -3770,7 +3755,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
         >
-          {activeTab === 'audit' ? renderAuditTab() : activeTab === 'ai' ? renderAiTab() : activeTab === 'blog' ? renderBlogTab() : renderTrackingTab()}
+          {activeTab === 'audit' ? renderAuditTab() : activeTab === 'ai' ? renderAiTab() : activeTab === 'fix' ? renderFixTab() : activeTab === 'blog' ? renderBlogTab() : renderTrackingTab()}
         </motion.div>
       </AnimatePresence>
 

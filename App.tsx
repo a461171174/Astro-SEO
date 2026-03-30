@@ -795,13 +795,18 @@ const App: React.FC = () => {
       case 'SEO检测':
       case 'SEO策略':
       case 'SEO管理':
+      case 'SEO处理':
       case 'SEO博客':
       case '效果分析':
-        let seoTab: 'audit' | 'ai' | 'tracking' | 'blog' = 'audit';
+        let seoTab: 'audit' | 'ai' | 'tracking' | 'blog' | 'fix' = 'audit';
         let seoMode: 'chat' | 'list' = 'chat';
         if (activeView === 'SEO策略') seoTab = 'ai';
         if (activeView === 'SEO管理') {
           seoTab = 'ai';
+          seoMode = 'list';
+        }
+        if (activeView === 'SEO处理') {
+          seoTab = 'fix';
           seoMode = 'list';
         }
         if (activeView === 'SEO博客') seoTab = 'blog';
