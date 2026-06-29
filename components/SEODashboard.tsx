@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LineChart, Line, BarChart, Bar, PieChart, Pie, 
@@ -13,6 +13,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, getDoc, updateDoc, doc, addDoc, onSnapshot, deleteDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import SEOBlogManager from './SEOBlogManager';
 import { SearchableSelect } from './SearchableSelect';
+import { useToast } from './Toast';
 
 interface SEODashboardProps {
   products: Product[];
@@ -53,7 +54,87 @@ interface ItemHistory {
   altText?: string;
 }
 
+const CATEGORY_STYLES: Record<string, string> = {
+  'SEO 基础标签': 'bg-slate-100 text-slate-700 border border-slate-200/50',
+  '页面结构': 'bg-slate-100 text-slate-700 border border-slate-200/50',
+  'URL 规范化': 'bg-slate-100 text-slate-700 border border-slate-200/50',
+  '图片 SEO': 'bg-slate-100 text-slate-700 border border-slate-200/50',
+  '内链优化': 'bg-slate-100 text-slate-700 border border-slate-200/50',
+};
+
+const isImageNameMeaningless = (name: string): boolean => {
+  if (!name) return true;
+  const fileName = name.split('/').pop() || name;
+  const baseName = fileName.split('.').slice(0, -1).join('.').toLowerCase().trim() || fileName.toLowerCase().trim();
+
+  if (baseName.length < 3) return true;
+
+  if (/^[\d\-_\s]+$/.test(baseName)) return true;
+
+  const isHexOrUuid = /^[0-9a-f]{8,36}$/i.test(baseName.replace(/[-_]/g, ''));
+  if (isHexOrUuid) return true;
+
+  const genericKeywords = [
+    'img_', 'dsc_', 'pano_', 'dcim', 'screenshot', 'untitled', 'capture',
+    'image', 'photo', 'pic', 'picture', 'temp', 'upload', 'logo', 'banner',
+    'background', 'bg', 'asset', 'file', 'media', 'thumbnail', 'placeholder'
+  ];
+
+  if (genericKeywords.some(keyword => {
+    if (baseName === keyword) return true;
+    const regex = new RegExp(`^${keyword}[0-9\\-_\\s]*$`, 'i');
+    return regex.test(baseName);
+  })) {
+    return true;
+  }
+
+  return false;
+};
+
+const getStatConfig = (label: string) => {
+  const configs: Record<string, { icon: React.ReactNode; color: string; bg: string; bar: string }> = {
+    'SEO 基础标签': { 
+      icon: <ICONS.Tag className="w-5 h-5 text-blue-600" />, 
+      color: 'text-blue-600', 
+      bg: 'bg-blue-50/60',
+      bar: 'bg-blue-500'
+    },
+    '页面结构': { 
+      icon: <ICONS.Heading className="w-5 h-5 text-indigo-600" />, 
+      color: 'text-indigo-600', 
+      bg: 'bg-indigo-50/60',
+      bar: 'bg-indigo-500' 
+    },
+    'URL 规范化': { 
+      icon: <ICONS.Globe className="w-5 h-5 text-emerald-600" />, 
+      color: 'text-emerald-600', 
+      bg: 'bg-emerald-50/60',
+      bar: 'bg-emerald-500' 
+    },
+    '图片 SEO': { 
+      icon: <ICONS.Image className="w-5 h-5 text-violet-600" />, 
+      color: 'text-violet-600', 
+      bg: 'bg-violet-50/60',
+      bar: 'bg-violet-500' 
+    },
+    '内链优化': { 
+      icon: <ICONS.Link className="w-5 h-5 text-amber-600" />, 
+      color: 'text-amber-600', 
+      bg: 'bg-amber-50/60',
+      bar: 'bg-amber-500' 
+    },
+  };
+  return configs[label] || { 
+    icon: <ICONS.Info className="w-5 h-5 text-slate-600" />, 
+    bg: 'bg-slate-50', 
+    color: 'text-slate-600', 
+    bar: 'bg-slate-600' 
+  };
+};
+
 const SEODashboard: React.FC<SEODashboardProps> = ({ products, collections, blogs, blogSets, pages, initialTab = 'audit', initialMode = 'chat', onTabChange }) => {
+  const { toast } = useToast();
+  const [blogEditActions, setBlogEditActions] = useState<{ publish: () => void; cancel: () => void } | null>(null);
   const allImages = useMemo(() => {
     const images: any[] = [];
     products.forEach(p => {
@@ -76,7 +157,7 @@ const SEODashboard: React.FC<SEODashboardProps> = ({ products, collections, blog
         images.push({ 
           id: `col-img-${c.id}`, 
           url: c.image, 
-          name: c.title, 
+          name: (c as any).imageName || c.title, 
           altText: c.imageAlt || '', 
           parentId: c.id, 
           parentTitle: c.title, 
@@ -89,7 +170,7 @@ const SEODashboard: React.FC<SEODashboardProps> = ({ products, collections, blog
         images.push({ 
           id: `blog-img-${b.id}`, 
           url: b.image, 
-          name: b.title, 
+          name: (b as any).imageName || b.title, 
           altText: b.imageAlt || '', 
           parentId: b.id, 
           parentTitle: b.title, 
@@ -107,9 +188,18 @@ const SEODashboard: React.FC<SEODashboardProps> = ({ products, collections, blog
       return items.filter(i => currentFilterIds.includes(i.id)).length;
     }
     if (type === 'images') {
-      return items.filter(i => !i.altText || i.altText.length < 5).length;
+      const unoptimizedImages = items.filter(i => {
+        if (i.seoOptimized) return false;
+        let parent: any = null;
+        if (i.parentType === 'product') parent = products.find(p => p.id === i.parentId);
+        else if (i.parentType === 'collection') parent = collections.find(c => c.id === i.parentId);
+        else if (i.parentType === 'blog') parent = blogs.find(b => b.id === i.parentId);
+        if (parent && parent.seoOptimized) return false;
+        return true;
+      });
+      return unoptimizedImages.filter(i => !i.altText || i.altText.length < 5 || (i.size && i.size > 500 * 1024) || isImageNameMeaningless(i.name)).length;
     }
-    return items.filter(i => !i.seoTitle || !i.seoDescription || i.seoTitle.length < 10 || i.seoDescription.length < 30).length;
+    return items.filter(i => !i.seoOptimized && (!i.seoTitle || !i.seoDescription || i.seoTitle.length < 10 || i.seoDescription.length < 30)).length;
   };
 
   const DEFAULT_PROMPTS = {
@@ -162,7 +252,18 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
   const [customPrompts, setCustomPrompts] = useState(DEFAULT_PROMPTS);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+  const [activePromptCategory, setActivePromptCategory] = useState<'general' | 'seo' | 'content' | 'blog'>('general');
+  const [selectedModel, setSelectedModel] = useState('gemini-3-flash-preview');
+  const [selectedMode, setSelectedMode] = useState('balanced');
   const [editingPrompts, setEditingPrompts] = useState(DEFAULT_PROMPTS);
+
+  useEffect(() => {
+    geminiService.setModel(selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    geminiService.setMode(selectedMode);
+  }, [selectedMode]);
 
   const [activeTab, setActiveTab] = useState<'audit' | 'ai' | 'tracking' | 'blog' | 'fix'>(initialTab);
   
@@ -211,7 +312,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   useEffect(() => {
     setAiMode(initialMode);
   }, [initialMode]);
-  const [aiTab, setAiTab] = useState<'products' | 'collections' | 'blogs' | 'blogSets' | 'pages' | 'images'>('products');
+  const [globalAiTab, setGlobalAiTab] = useState<'products' | 'collections' | 'blogs' | 'blogSets' | 'pages' | 'images'>('products');
+  const [fixAiTab, setFixAiTab] = useState<'products' | 'collections' | 'blogs' | 'blogSets' | 'pages' | 'images'>('products');
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [batchIsGenerating, setBatchIsGenerating] = useState(false);
@@ -225,15 +327,30 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const [brandName, setBrandName] = useState('');
   const [excludedKeywords, setExcludedKeywords] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'empty' | 'filled' | 'needs_optimization' | 'optimized'>('all');
+  const [globalFilterStatus, setGlobalFilterStatus] = useState<'all' | 'empty' | 'filled' | 'needs_optimization' | 'optimized'>('all');
+  const [fixFilterStatus, setFixFilterStatus] = useState<'all' | 'empty' | 'filled' | 'needs_optimization' | 'optimized'>('all');
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>('all');
   const [selectedPageId, setSelectedPageId] = useState<string>('all');
   const [selectedProductId, setSelectedProductId] = useState<string>('all');
-  const [filterIds, setFilterIds] = useState<string[] | null>(null);
+  const [globalFilterIds, setGlobalFilterIds] = useState<string[] | null>(null);
+  const [fixFilterIds, setFixFilterIds] = useState<string[] | null>(null);
+  const [activeFixIssueTitle, setActiveFixIssueTitle] = useState<string>('');
+  const [activeFixIssueDesc, setActiveFixIssueDesc] = useState<string>('');
+
+  // Dynamic state proxies so all list operations target correct mode state without altering file logic
+  const aiTab = activeTab === 'fix' ? fixAiTab : globalAiTab;
+  const filterStatus = activeTab === 'fix' ? fixFilterStatus : globalFilterStatus;
+  const filterIds = activeTab === 'fix' ? fixFilterIds : globalFilterIds;
+
+  const setAiTab = activeTab === 'fix' ? setFixAiTab : setGlobalAiTab;
+  const setFilterStatus = activeTab === 'fix' ? setFixFilterStatus : setGlobalFilterStatus;
+  const setFilterIds = activeTab === 'fix' ? setFixFilterIds : setGlobalFilterIds;
   const [selectedIssue, setSelectedIssue] = useState<AuditIssue | null>(null);
   const [lastCompressedId, setLastCompressedId] = useState<string | null>(null);
   const [expandedIssueIds, setExpandedIssueIds] = useState<string[]>([]);
+  const [auditViewMode, setAuditViewMode] = useState<'by-issue' | 'by-page'>('by-issue');
+  const [expandedPageIds, setExpandedPageIds] = useState<string[]>([]);
 
   // Conversational AI SEO state
   const [storeInfo, setStoreInfo] = useState('');
@@ -257,9 +374,12 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const [showHistory, setShowHistory] = useState(false);
   const [executionConfirmed, setExecutionConfirmed] = useState(false);
   const [isFinalConfirmed, setIsFinalConfirmed] = useState(false);
-  const [targetMarket, setTargetMarket] = useState('美国');
+  const [targetMarket, setTargetMarket] = useState<string[]>(['美国']);
   const [targetLanguage, setTargetLanguage] = useState('英语');
   const [isCompressing, setIsCompressing] = useState<string | null>(null);
+  const [imageCompressionLevel, setImageCompressionLevel] = useState<'fast' | 'balanced' | 'high'>('balanced');
+  const [autoCompressTypes, setAutoCompressTypes] = useState<string[]>(['product', 'collection', 'blog']);
+  const [showImageSettings, setShowImageSettings] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
 
   // New states for SEO management
@@ -272,6 +392,114 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showManagementOnboarding, setShowManagementOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [itemSuggestions, setItemSuggestions] = useState<{[key: string]: any}>({});
+  const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState<string | null>(null);
+  const [isBatchGeneratingSuggestions, setIsBatchGeneratingSuggestions] = useState(false);
+  const [confirmingApplyId, setConfirmingApplyId] = useState<string | null>(null);
+  const [inlineEditing, setInlineEditing] = useState<{ id: string; field: string; value: string } | null>(null);
+
+  const [isResetting, setIsResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showStrategyWarningModal, setShowStrategyWarningModal] = useState(false);
+
+  const issuesByPage = useMemo(() => {
+    if (!auditResults?.issues) return [];
+    const pageMap = new Map<string, {
+      item: any;
+      itemType: string;
+      issues: Array<{
+        id: string;
+        title: string;
+        category: string;
+        severity: 'high' | 'medium' | 'low';
+        description: string;
+        recommendation: string;
+        targetTab?: 'products' | 'collections' | 'blogs' | 'blogSets' | 'pages' | 'images';
+      }>;
+    }>();
+
+    auditResults.issues.forEach(issue => {
+      if (issue.affectedItems) {
+        issue.affectedItems.forEach(item => {
+          if (!item || !item.id) return;
+          const itemId = item.id;
+          let existing = pageMap.get(itemId);
+          if (!existing) {
+            // Determine item type
+            let itemType = '自定义页面';
+            if (products.some(p => p.id === itemId)) itemType = '商品页面';
+            else if (collections.some(c => c.id === itemId)) itemType = '分类系列';
+            else if (blogs.some(b => b.id === itemId)) itemType = '博客文章';
+            else if (blogSets.some(bs => bs.id === itemId)) itemType = '博客目录';
+            
+            existing = {
+              item,
+              itemType,
+              issues: []
+            };
+            pageMap.set(itemId, existing);
+          }
+          // Avoid duplicates
+          if (!existing.issues.some(i => i.id === issue.id)) {
+            existing.issues.push({
+              id: issue.id,
+              title: issue.title,
+              category: issue.category,
+              severity: issue.severity,
+              description: issue.description,
+              recommendation: issue.recommendation,
+              targetTab: issue.targetTab,
+            });
+          }
+        });
+      }
+    });
+
+    return Array.from(pageMap.values());
+  }, [auditResults, products, collections, blogs, blogSets, pages]);
+
+  const lastToastTime = useRef<number>(0);
+
+  const checkStrategyAndProceed = (silent = false) => {
+    if (!aiAnalysis?.strategy) {
+      if (!silent) {
+        setShowStrategyWarningModal(true);
+      }
+      return false;
+    }
+    return true;
+  };
+
+  const StrategyBanner = () => {
+    if (aiAnalysis?.strategy || (activeTab !== 'ai' && activeTab !== 'fix' && activeTab !== 'audit')) return null;
+    return (
+      <motion.div 
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-6 p-5 bg-amber-50 border border-amber-200 rounded-3xl flex items-start gap-4 shadow-sm"
+      >
+        <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shrink-0">
+          <ICONS.Zap className="w-6 h-6" />
+        </div>
+        <div className="space-y-1 py-1">
+          <h4 className="text-sm font-black text-amber-900">提示：尚未生成 SEO 策略</h4>
+          <p className="text-xs text-amber-700 leading-relaxed font-medium">
+            为了获得更精准的 AI 优化内容，建议您先点击左侧的 <span className="text-amber-900 font-bold underline decoration-amber-300">SEO 策略</span> 并输入品牌信息生成全局优化方案。
+          </p>
+        </div>
+        <button 
+          onClick={() => {
+            setAiMode('chat');
+            setActiveTab('ai');
+          }}
+          className="ml-auto px-4 py-2 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-all flex items-center gap-2 self-center shrink-0 shadow-md shadow-amber-200"
+        >
+          前往设置
+          <ICONS.ChevronRight className="w-3 h-3" />
+        </button>
+      </motion.div>
+    );
+  };
 
   // Load global SEO config
   useEffect(() => {
@@ -292,12 +520,18 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         setExcludedKeywords(data.excludedKeywords || '');
         setStoreInfo(data.storeInfo || '');
         setSavedFileName(data.uploadedFileName || null);
-        setTargetMarket(data.targetMarket || '美国');
+        if (data.targetMarket) {
+          setTargetMarket(Array.isArray(data.targetMarket) ? data.targetMarket : [data.targetMarket]);
+        } else {
+          setTargetMarket(['美国']);
+        }
         setTargetLanguage(data.targetLanguage || '英语');
         setKeywordCount(data.keywordCount || 5);
         setKeywordLanguage(data.targetLanguage || '英语');
+        if (data.selectedModel) setSelectedModel(data.selectedModel);
+        if (data.selectedMode) setSelectedMode(data.selectedMode);
       }
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'seoConfigs/global'));
     return () => unsubscribe();
   }, []);
 
@@ -311,6 +545,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           brandName,
           storeInfo,
           excludedKeywords,
+          targetMarket,
           uploadedFileName: uploadedFile?.name || savedFileName || null,
           updatedAt: new Date().toISOString()
         });
@@ -321,6 +556,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
             brandName,
             storeInfo,
             excludedKeywords,
+            targetMarket,
             uploadedFileName: uploadedFile?.name || savedFileName || null,
             updatedAt: new Date().toISOString()
           }, { merge: true });
@@ -331,7 +567,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [brandName, storeInfo, excludedKeywords, uploadedFile]);
+  }, [brandName, storeInfo, excludedKeywords, uploadedFile, targetMarket]);
 
   // Check for first-time user onboarding
   useEffect(() => {
@@ -390,6 +626,14 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     setSelectedPageId('all');
     setSelectedProductId('all');
   }, [aiTab]);
+
+  // Reset filters when fixAiTab changes
+  useEffect(() => {
+    setSelectedTag('all');
+    setSelectedCollectionId('all');
+    setSelectedPageId('all');
+    setSelectedProductId('all');
+  }, [fixAiTab]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -455,6 +699,11 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const handleSavePrompts = async () => {
     try {
       await setDoc(doc(db, 'seoConfigs', 'prompts'), editingPrompts);
+      await updateDoc(doc(db, 'seoConfigs', 'global'), {
+        selectedModel,
+        selectedMode,
+        updatedAt: new Date().toISOString()
+      });
       setCustomPrompts(editingPrompts);
       setIsPromptModalOpen(false);
     } catch (error) {
@@ -470,6 +719,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const runAudit = () => {
+    if (!checkStrategyAndProceed()) return;
     setIsScanning(true);
     setScanProgress(0);
     
@@ -487,7 +737,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const performAudit = () => {
-    const allItems = [...products, ...collections, ...blogs, ...blogSets, ...pages];
+    const allItems = [...products, ...collections, ...blogs, ...blogSets, ...pages].filter(item => !item.seoOptimized);
     const issues: AuditIssue[] = [];
     
     // --- 1. SEO Meta Tags ---
@@ -574,7 +824,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         severity: 'medium',
         title: 'H1 标签未包含关键词',
         description: `有 ${h1MissingKeywords.length} 个页面的 H1 标签未包含任何核心关键词。`,
-        recommendation: '在 H1 标签中自然地融入核心关键词。',
+        recommendation: '在 H1 标签中自然地融入核心关键词。前往对应页面编辑页面标题',
         affectedItems: h1MissingKeywords,
         targetTab: 'products'
       });
@@ -595,6 +845,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
     // --- 3. URL Normalization ---
     const invalidHandles = allItems.filter(item => {
+      if (item.id === 'home') return false; // 排除首页检测URL
       const url = item.seoUrl || (item as any).handle || '';
       if (!url) return true;
       const slug = url.split('/').pop() || '';
@@ -615,13 +866,52 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }
 
     // --- 4. Image SEO ---
-    const images = [];
-    products.forEach(p => p.media.forEach(m => { if (m.type === 'image') images.push({ ...m, size: m.size || (Math.floor(Math.random() * 400) + 100) * 1024 }); }));
-    collections.forEach(c => { if (c.image) images.push({ url: c.image, size: (Math.floor(Math.random() * 400) + 100) * 1024, altText: (c as any).imageAlt || '' }); });
-    blogs.forEach(b => { if (b.image) images.push({ url: b.image, size: (Math.floor(Math.random() * 400) + 100) * 1024, altText: (b as any).imageAlt || '' }); });
+    const images: any[] = [];
+    products.filter(p => !p.seoOptimized).forEach(p => p.media.forEach(m => { 
+      if (m.type === 'image') {
+        images.push({ 
+          ...m, 
+          id: m.id || `img-${p.id}-${m.url.split('/').pop()}`,
+          size: m.size || (Math.floor(Math.random() * 400) + 100) * 1024,
+          name: m.name || (m.url ? m.url.split('/').pop() : 'untitled.jpg'),
+          parentType: 'product',
+          parentId: p.id,
+          parentTitle: p.title
+        }); 
+      } 
+    }));
+    collections.filter(c => !c.seoOptimized).forEach(c => { 
+      if (c.image) {
+        images.push({ 
+          id: `col-img-${c.id}`, 
+          url: c.image, 
+          size: (Math.floor(Math.random() * 400) + 100) * 1024, 
+          altText: (c as any).imageAlt || '',
+          name: (c as any).imageName || c.title || 'collection-image.jpg',
+          parentType: 'collection',
+          parentId: c.id,
+          parentTitle: c.title
+        }); 
+      } 
+    });
+    blogs.filter(b => !b.seoOptimized).forEach(b => { 
+      if (b.image) {
+        images.push({ 
+          id: `blog-img-${b.id}`, 
+          url: b.image, 
+          size: (Math.floor(Math.random() * 400) + 100) * 1024, 
+          altText: (b as any).imageAlt || '',
+          name: (b as any).imageName || b.title || 'blog-image.jpg',
+          parentType: 'blog',
+          parentId: b.id,
+          parentTitle: b.title
+        }); 
+      } 
+    });
 
     const missingAlt = images.filter(img => !img.altText);
     const largeImages = images.filter(img => img.size && img.size > 500 * 1024);
+    const meaninglessNames = images.filter(img => isImageNameMeaningless(img.name));
 
     if (missingAlt.length > 0) {
       issues.push({
@@ -643,15 +933,28 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         severity: 'high',
         title: '图片体积过大',
         description: `发现 ${largeImages.length} 张图片超过 500KB，会显著增加页面加载时间。`,
-        recommendation: '压缩这些图片或使用 WebP 格式，建议单张图片保持在 200KB 以内。',
+        recommendation: '压缩这些图片或使用 WebP 格式，建议单张图片保持在 500KB 以内。',
         affectedItems: largeImages,
         targetTab: 'images'
       });
     }
 
+    if (meaninglessNames.length > 0) {
+      issues.push({
+        id: 'image-name-meaningless',
+        category: '图片 SEO',
+        severity: 'low',
+        title: '图片名称不规范 (对 SEO 无意义)',
+        description: `发现 ${meaninglessNames.length} 张图片的名称不够规范，或者是系统默认生成的文件名（如 DSC_、IMG_、纯数字或 hash、极短字符等），搜索引擎无法读取。`,
+        recommendation: '重命名图片文件，采用连字符 (-) 隔开的具有实际产品/页面意义的拼音或英文小写单词（如 red-leather-jacket.jpg）。',
+        affectedItems: meaninglessNames,
+        targetTab: 'images'
+      });
+    }
+
     // --- 5. Internal Links ---
-    // 404 pages (simulated as items with invalid/missing URLs)
-    const brokenLinks = allItems.filter(item => !item.seoUrl && !(item as any).handle);
+    // 404 pages (simulated as items with invalid/missing URLs, excluding configured redirects)
+    const brokenLinks = allItems.filter(item => !item.seoUrl && !(item as any).handle && !item.redirectUrl);
     
     // Orphan pages: Check if page URL is referenced in other pages' content
     const allUrls = allItems.map(item => item.seoUrl || (item as any).handle || '').filter(Boolean);
@@ -694,47 +997,93 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     // Score Calculation
     let score = 100;
     
-    // 1. Meta Tags (25%)
-    const metaPenalty = (missingTitles.length / allItems.length) * 15 + (missingDescriptions.length / allItems.length) * 10;
-    score -= Math.min(25, metaPenalty);
+    if (allItems.length > 0) {
+      // 1. Meta Tags (25%)
+      const metaPenalty = (missingTitles.length / allItems.length) * 15 + (missingDescriptions.length / allItems.length) * 10;
+      score -= Math.min(25, metaPenalty);
 
-    // 2. Page Structure (20%)
-    const structurePenalty = (missingH1.length / allItems.length) * 10 + (h1MissingKeywords.length / allItems.length) * 5 + (hierarchyIssues.length / allItems.length) * 5;
-    score -= Math.min(20, structurePenalty);
+      // 2. Page Structure (20%)
+      const structurePenalty = (missingH1.length / allItems.length) * 10 + (h1MissingKeywords.length / allItems.length) * 5 + (hierarchyIssues.length / allItems.length) * 5;
+      score -= Math.min(20, structurePenalty);
 
-    // 3. URL Normalization (15%)
-    const urlPenalty = (invalidHandles.length / allItems.length) * 15;
-    score -= Math.min(15, urlPenalty);
+      // 3. URL Normalization (15%)
+      const urlPenalty = (invalidHandles.length / allItems.length) * 15;
+      score -= Math.min(15, urlPenalty);
 
-    // 4. Image SEO (20%)
-    const imagePenalty = images.length > 0 ? (missingAlt.length / images.length) * 10 + (largeImages.length / images.length) * 10 : 0;
-    score -= Math.min(20, imagePenalty);
+      // 4. Image SEO (20%)
+      const imagePenalty = images.length > 0 ? (missingAlt.length / images.length) * 8 + (largeImages.length / images.length) * 8 + (meaninglessNames.length / images.length) * 4 : 0;
+      score -= Math.min(20, imagePenalty);
 
-    // 5. Internal Links (20%)
-    const linksPenalty = (brokenLinks.length / allItems.length) * 15 + (orphanPages.length / allItems.length) * 5;
-    score -= Math.min(20, linksPenalty);
+      // 5. Internal Links (20%)
+      const linksPenalty = (brokenLinks.length / allItems.length) * 15 + (orphanPages.length / allItems.length) * 5;
+      score -= Math.min(20, linksPenalty);
+    }
 
     // Calculate coverage stats by counting items without issues in each category
     const itemsWithMetaIssues = new Set([...missingTitles.map(i => i.id), ...missingDescriptions.map(i => i.id)]);
     const itemsWithStructureIssues = new Set([...missingH1.map(i => i.id), ...h1MissingKeywords.map(i => i.id), ...hierarchyIssues.map(i => i.id)]);
     const itemsWithUrlIssues = new Set(invalidHandles.map(i => i.id));
-    const imagesWithIssues = new Set([...missingAlt.map(i => i.id), ...largeImages.map(i => i.id)]);
+    const imagesWithIssues = new Set([...missingAlt.map(i => i.id), ...largeImages.map(i => i.id), ...meaninglessNames.map(i => i.id)]);
     const itemsWithLinkIssues = new Set([...brokenLinks.map(i => i.id), ...orphanPages.map(i => i.id)]);
+
+    const sortedIssues = issues.sort((a, b) => {
+      const severityMap = { high: 3, medium: 2, low: 1 };
+      return severityMap[b.severity] - severityMap[a.severity];
+    });
+
+    const totalCount = allItems.length;
+    const totalUrlCheckedCount = allItems.filter(item => item.id !== 'home').length;
 
     setAuditResults({
       score: Math.max(0, Math.round(score)),
-      issues: issues.sort((a, b) => {
-        const severityMap = { high: 3, medium: 2, low: 1 };
-        return severityMap[b.severity] - severityMap[a.severity];
-      }),
+      issues: sortedIssues,
       stats: {
-        'SEO 基础标签': Math.round(((allItems.length - itemsWithMetaIssues.size) / allItems.length) * 100),
-        '页面结构': Math.round(((allItems.length - itemsWithStructureIssues.size) / allItems.length) * 100),
-        'URL 规范化': Math.round(((allItems.length - itemsWithUrlIssues.size) / allItems.length) * 100),
+        'SEO 基础标签': totalCount > 0 ? Math.round(((totalCount - itemsWithMetaIssues.size) / totalCount) * 100) : 100,
+        '页面结构': totalCount > 0 ? Math.round(((totalCount - itemsWithStructureIssues.size) / totalCount) * 100) : 100,
+        'URL 规范化': totalUrlCheckedCount > 0 ? Math.round(((totalUrlCheckedCount - itemsWithUrlIssues.size) / totalUrlCheckedCount) * 100) : 100,
         '图片 SEO': images.length > 0 ? Math.round(((images.length - imagesWithIssues.size) / images.length) * 100) : 100,
-        '内链优化': Math.round(((allItems.length - itemsWithLinkIssues.size) / allItems.length) * 100),
+        '内链优化': totalCount > 0 ? Math.round(((totalCount - itemsWithLinkIssues.size) / totalCount) * 100) : 100,
       }
     });
+
+    // Automatically trigger AI suggestion generation for affected items is removed per user request: "检测不生成 ai 优化建议"
+    // handleAutoGenerateAuditSuggestions(sortedIssues);
+  };
+
+  const handleAutoGenerateAuditSuggestions = async (issues: AuditIssue[]) => {
+    // Check strategy once at the beginning, but keep it silent as audit itself shouldn't necessarily block if strategy is missing
+    // however, since suggestions require a strategy, we skip if it's missing.
+    if (!checkStrategyAndProceed(true)) return;
+
+    const itemsToOptimize: { item: any, type: string }[] = [];
+    const seenIds = new Set();
+
+    issues.forEach(issue => {
+      if (issue.affectedItems && issue.targetTab && issue.targetTab !== 'images') {
+        const type = issue.targetTab.slice(0, -1); // 'products' -> 'product'
+        issue.affectedItems.forEach(item => {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            itemsToOptimize.push({ item, type });
+          }
+        });
+      }
+    });
+
+    if (itemsToOptimize.length === 0) return;
+
+    setIsBatchGeneratingSuggestions(true);
+    try {
+      for (const { item, type } of itemsToOptimize) {
+        // Skip if suggestion already exists
+        if (itemSuggestions[item.id]) continue;
+        await handleGenerateSuggestions(item, type);
+      }
+    } catch (error) {
+      console.error('Auto-generation of audit suggestions failed:', error);
+    } finally {
+      setIsBatchGeneratingSuggestions(false);
+    }
   };
 
   const handleAiGenerate = async (type: any, item: any) => {
@@ -839,18 +1188,18 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const handleGenerateKeywords = async (type: any, item: any) => {
+    if (!checkStrategyAndProceed()) return;
     setIsGeneratingKeywords(item.id);
     try {
       const keywords = await geminiService.generateKeywords(type, item, keywordCount, keywordLanguage, brandName, aiAnalysis?.strategy, selectedKeywords, excludedKeywords, customPrompts.keywords);
-      const collectionName = type === 'product' ? 'products' : type === 'collection' ? 'collections' : type === 'blog' ? 'blogs' : 'pages';
       
-      const updatedItem = {
-        ...item,
-        keywords: keywords,
-        updatedAt: new Date().toISOString()
-      };
-
-      await setDoc(doc(db, collectionName, item.id), cleanObject(updatedItem));
+      setItemSuggestions(prev => ({
+        ...prev,
+        [item.id]: {
+          ...(prev[item.id] || {}),
+          keywords: keywords
+        }
+      }));
     } catch (error) {
       if (isAbortError(error)) return;
       console.error('Keyword generation failed:', error);
@@ -888,7 +1237,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }
   };
 
-  const handleUpdateAltText = async (item: any, newAlt: string) => {
+  const handleUpdateAltText = async (item: any, newAlt: string, newName?: string) => {
     try {
       // Find original item to save its state to history
       let originalItem: any = null;
@@ -914,6 +1263,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         seoUrl: source.seoUrl ?? '',
         keywords: [...(source.keywords ?? [])],
         altText: source.altText ?? source.imageAlt ?? '',
+        name: source.name ?? source.imageName ?? '',
         updatedAt: source.updatedAt ?? new Date().toISOString()
       };
       
@@ -924,19 +1274,27 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         if (product) {
           const newMedia = product.media.map(m => {
             const mid = m.id || `img-${product.id}-${m.url.split('/').pop()}`;
-            return mid === item.id ? { ...m, altText: newAlt, history: newHistory } : m;
+            return mid === item.id ? { ...m, altText: newAlt, name: newName !== undefined ? newName : (m.name || ''), history: newHistory } : m;
           });
           await setDoc(doc(db, 'products', product.id), cleanObject({ ...product, media: newMedia, updatedAt: new Date().toISOString() }));
         }
       } else if (item.parentType === 'collection') {
         const collection = collections.find(c => c.id === item.parentId);
         if (collection) {
-          await setDoc(doc(db, 'collections', collection.id), cleanObject({ ...collection, imageAlt: newAlt, history: newHistory, updatedAt: new Date().toISOString() }));
+          const collectionData: any = { ...collection, imageAlt: newAlt, history: newHistory, updatedAt: new Date().toISOString() };
+          if (newName !== undefined) {
+            collectionData.imageName = newName;
+          }
+          await setDoc(doc(db, 'collections', collection.id), cleanObject(collectionData));
         }
       } else if (item.parentType === 'blog') {
         const blog = blogs.find(b => b.id === item.parentId);
         if (blog) {
-          await setDoc(doc(db, 'blogs', blog.id), cleanObject({ ...blog, imageAlt: newAlt, history: newHistory, updatedAt: new Date().toISOString() }));
+          const blogData: any = { ...blog, imageAlt: newAlt, history: newHistory, updatedAt: new Date().toISOString() };
+          if (newName !== undefined) {
+            blogData.imageName = newName;
+          }
+          await setDoc(doc(db, 'blogs', blog.id), cleanObject(blogData));
         }
       }
     } catch (error) {
@@ -950,9 +1308,20 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
       // Mock compression delay
       await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Reduce size by 40-60%
+      // Size reduction based on level
       const currentSize = item.size || (Math.floor(Math.random() * 800) + 200) * 1024;
-      const newSize = Math.floor(currentSize * (0.4 + Math.random() * 0.2));
+      let reductionMin = 0.4;
+      let reductionMax = 0.6;
+
+      if (imageCompressionLevel === 'fast') {
+        reductionMin = 0.8;
+        reductionMax = 0.9;
+      } else if (imageCompressionLevel === 'high') {
+        reductionMin = 0.15;
+        reductionMax = 0.3;
+      }
+
+      const newSize = Math.floor(currentSize * (reductionMin + Math.random() * (reductionMax - reductionMin)));
 
       if (item.parentType === 'product') {
         const product = products.find(p => p.id === item.parentId);
@@ -1047,37 +1416,65 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const handleBatchOptimizeField = async (field: 'seoTitle' | 'seoDescription' | 'seoUrl' | 'all') => {
+    if (!checkStrategyAndProceed()) return;
     if (selectedItems.length === 0) return;
     setBatchIsOptimizingField(field);
     try {
       const type = aiTab.slice(0, -1) as any;
-      const collectionName = aiTab;
-      const itemsToOptimize = (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : pages)
+      const itemsToOptimize = (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : aiTab === 'blogSets' ? blogSets : pages)
         .filter(item => selectedItems.includes(item.id));
 
       for (const item of itemsToOptimize) {
         const primaryKeyword = item.primaryKeyword || (item.keywords?.[0] || '');
         const result = await geminiService.generateSEOContent(type, item, keywordCount, keywordLanguage, brandName, aiAnalysis?.strategy, selectedKeywords, excludedKeywords, primaryKeyword, customPrompts.seo);
-        const updatedItem = {
-          ...item,
-          updatedAt: new Date().toISOString()
-        };
         
-        if (field === 'all') {
-          updatedItem.seoTitle = result.seoTitle;
-          updatedItem.seoDescription = result.seoDescription;
-          updatedItem.seoUrl = result.seoUrl;
-          updatedItem.keywords = result.keywords;
-        } else {
-          updatedItem[field] = result[field];
-        }
-
-        await setDoc(doc(db, collectionName, item.id), cleanObject(updatedItem));
+        setItemSuggestions(prev => ({
+          ...prev,
+          [item.id]: result
+        }));
       }
-      setSelectedItems([]);
     } catch (error) {
       if (isAbortError(error)) return;
       console.error(`Batch AI Optimization for ${field} failed:`, error);
+    } finally {
+      setBatchIsOptimizingField(null);
+    }
+  };
+
+  const handleBatchAdopt = async () => {
+    if (selectedItems.length === 0) return;
+    setBatchIsOptimizingField('adopt');
+    try {
+      const collectionName = aiTab;
+      const itemsToUpdate = (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : aiTab === 'blogSets' ? blogSets : pages)
+        .filter(item => selectedItems.includes(item.id));
+
+      for (const item of itemsToUpdate) {
+        const suggestion = itemSuggestions[item.id];
+        if (!suggestion) continue;
+
+        const updatedItem = {
+          ...item,
+          seoTitle: suggestion.seoTitle || item.seoTitle,
+          seoDescription: suggestion.seoDescription || item.seoDescription,
+          seoUrl: suggestion.seoUrl || item.seoUrl,
+          keywords: suggestion.keywords || item.keywords,
+          updatedAt: new Date().toISOString()
+        };
+
+        await setDoc(doc(db, collectionName, item.id), cleanObject(updatedItem));
+      }
+
+      // Clear suggestions for adopted items
+      setItemSuggestions(prev => {
+        const next = { ...prev };
+        selectedItems.forEach(id => delete next[id]);
+        return next;
+      });
+
+      setSelectedItems([]);
+    } catch (error) {
+      console.error('Batch adopt failed:', error);
     } finally {
       setBatchIsOptimizingField(null);
     }
@@ -1089,7 +1486,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     try {
       const newKws = batchKeywordsInput.trim().split(/[、,，\n]+/).filter(k => k.trim());
       const collectionName = aiTab;
-      const itemsToUpdate = (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : pages)
+      const itemsToUpdate = (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : aiTab === 'blogSets' ? blogSets : pages)
         .filter(item => selectedItems.includes(item.id));
 
       for (const item of itemsToUpdate) {
@@ -1112,6 +1509,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const handleBatchOptimizeAltText = async () => {
+    if (!checkStrategyAndProceed()) return;
     if (selectedItems.length === 0) return;
     setBatchIsOptimizingField('altText' as any);
     try {
@@ -1143,11 +1541,17 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     if (selectedItems.length === 0) return;
     setBatchIsOptimizingField('compress' as any);
     try {
-      const allImgs: any[] = [];
-      products.forEach(p => p.media.forEach(m => { if (m.type === 'image') allImgs.push({ ...m, id: m.id || `img-${p.id}-${m.url.split('/').pop()}`, parentId: p.id, parentType: 'product' }); }));
+      // Use allImages memo which already includes products, collections, and blogs
+      const itemsToCompress = allImages.filter(img => 
+        selectedItems.includes(img.id) && 
+        autoCompressTypes.includes(img.parentType)
+      );
       
-      const itemsToCompress = allImgs.filter(img => selectedItems.includes(img.id) && img.parentType === 'product');
-      
+      if (itemsToCompress.length === 0) {
+        toast.error("所选图片类型不在自动压缩范围内");
+        return;
+      }
+
       for (const item of itemsToCompress) {
         await handleCompressImage(item);
       }
@@ -1160,7 +1564,34 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }
   };
 
+  const handleCompressAllLargeImages = async (largeImagesList: any[]) => {
+    if (largeImagesList.length === 0) return;
+    setBatchIsOptimizingField('compress' as any);
+    try {
+      const itemsToCompress = largeImagesList.filter(img => 
+        autoCompressTypes.includes(img.parentType)
+      );
+      
+      if (itemsToCompress.length === 0) {
+        toast.error("无可自动压缩的图片类型");
+        return;
+      }
+
+      for (const item of itemsToCompress) {
+        await handleCompressImage(item);
+      }
+      toast.success("所有过大图片已成功压缩！");
+    } catch (error) {
+      if (isAbortError(error)) return;
+      console.error('Batch compression of all large images failed:', error);
+      toast.error("部分图片压缩出现异常，请重试");
+    } finally {
+      setBatchIsOptimizingField(null);
+    }
+  };
+
   const handleOptimizeItem = async (item: any, type: 'product' | 'collection' | 'blog' | 'page' | 'image') => {
+    if (!checkStrategyAndProceed()) return;
     setIsOptimizingItem(item.id);
     try {
       const collectionName = aiTab;
@@ -1198,10 +1629,186 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }
   };
 
+  const handleGenerateSuggestions = async (item: any, type: string) => {
+    if (!checkStrategyAndProceed()) return;
+    setIsGeneratingSuggestions(item.id);
+    try {
+      const result = await geminiService.generateSEOContent(
+        type as any, 
+        item, 
+        keywordCount, 
+        keywordLanguage, 
+        brandName, 
+        aiAnalysis?.strategy, 
+        selectedKeywords, 
+        excludedKeywords, 
+        item.primaryKeyword || '', 
+        customPrompts.seo
+      );
+      setItemSuggestions(prev => ({
+        ...prev,
+        [item.id]: result
+      }));
+    } catch (error) {
+      console.error('Failed to generate suggestions:', error);
+    } finally {
+      setIsGeneratingSuggestions(null);
+    }
+  };
+
+  const handleApplySuggestion = async (item: any, field: string, value: any) => {
+    if (field === 'all') {
+      const type = aiTab.slice(0, -1) as any;
+      const collectionName = aiTab;
+      try {
+        const updatedItem = {
+          ...item,
+          seoTitle: value.seoTitle,
+          seoDescription: value.seoDescription,
+          seoUrl: value.seoUrl,
+          keywords: value.keywords,
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, collectionName, item.id), cleanObject(updatedItem));
+        setItemSuggestions(prev => {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+      } catch (error) {
+        console.error('Failed to apply all suggestions:', error);
+      }
+    } else {
+      // For individual fields, enter inline edit mode with the suggestion
+      setInlineEditing({
+        id: item.id,
+        field: field,
+        value: Array.isArray(value) ? value.join(', ') : value
+      });
+    }
+  };
+
+  const getItemCollectionName = (item: any) => {
+    if (products.some(p => p.id === item.id)) return 'products';
+    if (collections.some(c => c.id === item.id)) return 'collections';
+    if (blogs.some(b => b.id === item.id)) return 'blogs';
+    if (blogSets.some(bs => bs.id === item.id)) return 'blogSets';
+    if (pages.some(p => p.id === item.id)) return 'pages';
+    return aiTab;
+  };
+
+  const getItemPageUrl = (item: any) => {
+    const colName = getItemCollectionName(item);
+    if (colName === 'pages' && (item.id === 'home' || item.seoUrl === 'home' || item.seoUrl === '')) {
+      return '/';
+    }
+    let prefix = '/';
+    if (colName === 'products') prefix = '/products/';
+    else if (colName === 'collections') prefix = '/collections/';
+    else if (colName === 'blogs') prefix = '/blogs/';
+    else if (colName === 'blogSets') prefix = '/blog-sets/';
+    else if (colName === 'pages') prefix = '/pages/';
+
+    const slug = item.seoUrl || item.handle || item.id || '';
+    return `${prefix}${slug}`;
+  };
+
+  const getParentPageUrl = (item: any) => {
+    if (!item.parentType || !item.parentId) return '/';
+
+    let prefix = '/';
+    let slug = item.parentId;
+
+    if (item.parentType === 'product') {
+      prefix = '/products/';
+      const parent = products.find(p => p.id === item.parentId);
+      if (parent) {
+        slug = parent.seoUrl || (parent as any).handle || parent.id;
+      }
+    } else if (item.parentType === 'collection') {
+      prefix = '/collections/';
+      const parent = collections.find(c => c.id === item.parentId);
+      if (parent) {
+        slug = parent.seoUrl || parent.id;
+      }
+    } else if (item.parentType === 'blog') {
+      prefix = '/blogs/';
+      const parent = blogs.find(b => b.id === item.parentId);
+      if (parent) {
+        slug = parent.seoUrl || parent.id;
+      }
+    } else if (item.parentType === 'blog-set' || item.parentType === 'blogSet') {
+      prefix = '/blog-sets/';
+      const parent = blogSets.find(bs => bs.id === item.parentId);
+      if (parent) {
+        slug = parent.seoUrl || parent.id;
+      }
+    } else if (item.parentType === 'page') {
+      prefix = '/pages/';
+      const parent = pages.find(p => p.id === item.parentId);
+      if (parent) {
+        slug = parent.seoUrl || parent.id;
+      }
+    }
+
+    return `${prefix}${slug}`;
+  };
+
+  const handleInlineSave = async () => {
+    if (!inlineEditing) return;
+    const { id, field, value } = inlineEditing;
+    
+    try {
+      const allLists = [
+        { name: 'products', items: products },
+        { name: 'collections', items: collections },
+        { name: 'blogs', items: blogs },
+        { name: 'blogSets', items: blogSets },
+        { name: 'pages', items: pages }
+      ];
+      
+      let foundListInfo = allLists.find(li => li.items.some(i => i.id === id));
+      const collectionName = foundListInfo ? foundListInfo.name : aiTab;
+      const items = foundListInfo ? foundListInfo.items : (aiTab === 'products' ? products : aiTab === 'collections' ? collections : aiTab === 'blogs' ? blogs : pages);
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      let finalValue: any = value;
+      if (field === 'keywords') {
+        finalValue = value.split(/[、,，]+/).map(k => k.trim()).filter(Boolean);
+      }
+
+      const updatedItem = {
+        ...item,
+        [field]: finalValue,
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, collectionName, id), cleanObject(updatedItem));
+      
+      // Clear the suggestion for this field if it matches the saved value
+      if (itemSuggestions[id]?.[field]) {
+        // Optional: you might want to clear it anyway or only if it matches
+      }
+
+      setInlineEditing(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `${aiTab}/${id}`);
+    }
+  };
+
   const handleUpdateItemSEO = async (updatedData: any) => {
     if (!editingItem) return;
     try {
-      const collectionName = aiTab;
+      const allLists = [
+        { name: 'products', items: products },
+        { name: 'collections', items: collections },
+        { name: 'blogs', items: blogs },
+        { name: 'blogSets', items: blogSets },
+        { name: 'pages', items: pages }
+      ];
+      let foundListInfo = allLists.find(li => li.items.some(i => i.id === editingItem.id));
+      const collectionName = foundListInfo ? foundListInfo.name : aiTab;
       
       // Find original item to save its state to history (before applying new changes)
       const originalItem = [...products, ...collections, ...blogs, ...pages].find(i => i.id === editingItem.id);
@@ -1232,6 +1839,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const handleAiOptimizeItem = async () => {
+    if (!checkStrategyAndProceed()) return;
     if (!editingItem) return;
     setIsGenerating(editingItem.id);
     try {
@@ -1253,6 +1861,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   };
 
   const handleAiOptimizeItemField = async (field: 'seoTitle' | 'seoDescription') => {
+    if (!checkStrategyAndProceed()) return;
     if (!editingItem) return;
     setIsGenerating(`${editingItem.id}-${field}`);
     try {
@@ -1381,7 +1990,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           blogs: blogs.slice(0, 6), 
           pages: pages.slice(0, 6) 
         }, 
-        targetMarket, 
+        targetMarket.join(', '), 
         targetLanguage,
         brandName,
         excludedKeywords,
@@ -1423,7 +2032,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         brandName,
         excludedKeywords,
         storeInfo,
-        targetMarket,
+        targetMarket: targetMarket,
         targetLanguage,
         keywordCount,
         updatedAt: new Date().toISOString()
@@ -1447,10 +2056,35 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     }
   };
 
+  const handleResetGlobalStrategy = async () => {
+    setIsResetting(true);
+    try {
+      await setDoc(doc(db, 'seoConfigs', 'global'), {
+        strategy: '',
+        keywords: [],
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      
+      setAiAnalysis(null);
+      setEditableKeywords([]);
+      setSelectedKeywords([]);
+      setExecutionConfirmed(false);
+      setIsFinalConfirmed(false);
+      
+      toast.success("已成功清空全局 SEO 策略，您现在可以重新生成。");
+    } catch (error) {
+      console.error('Failed to reset strategy:', error);
+      toast.error("无法清空策略，请检查数据库权限。");
+    } finally {
+      setIsResetting(false);
+      setShowResetConfirm(false);
+    }
+  };
+
   const handleRecommendCompetitors = async () => {
     setIsRecommendingCompetitors(true);
     try {
-      const recommendations = await geminiService.recommendCompetitors(storeInfo, products, targetMarket);
+      const recommendations = await geminiService.recommendCompetitors(storeInfo, products, targetMarket.join(', '));
       // Filter out existing competitors
       const existingNames = competitorData.map(c => c.name);
       const newRecs = recommendations.filter((r: any) => !existingNames.includes(r.name));
@@ -1499,6 +2133,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
   const renderAuditTab = () => (
     <div className="space-y-6">
+      <StrategyBanner />
       <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center text-center">
         {!auditResults && !isScanning ? (
           <>
@@ -1549,18 +2184,58 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 <span className="absolute text-3xl font-black text-slate-900">{auditResults!.score}</span>
               </div>
               <h3 className="font-bold text-slate-900">总体 SEO 评分</h3>
+              <div className="mt-2 text-xs font-medium text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>已检测页面数量：<strong>{(products?.length || 0) + (collections?.length || 0) + (blogs?.length || 0) + (blogSets?.length || 0) + (pages?.length || 0)}</strong> 个</span>
+              </div>
               <button onClick={runAudit} className="mt-4 text-sm text-blue-600 font-bold hover:underline flex items-center gap-1">
                 <ICONS.RefreshCw className="w-3 h-3" /> 重新扫描
               </button>
             </div>
             
-            <div className="lg:col-span-2 grid grid-cols-2 gap-4">
-              {Object.entries(auditResults!.stats).map(([label, value]) => (
-                <div key={label} className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="text-xs text-slate-400 font-bold uppercase mb-1">{label}</div>
-                  <div className="text-xl font-black text-slate-900">{value}%</div>
-                </div>
-              ))}
+            <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {Object.entries(auditResults!.stats).map(([label, value], index) => {
+                const config = getStatConfig(label);
+                const isLastItem = index === Object.keys(auditResults!.stats).length - 1;
+                
+                return (
+                  <div 
+                    key={label} 
+                    className={`p-5 bg-white rounded-2xl border border-slate-100 flex flex-col justify-between hover:shadow-lg hover:shadow-slate-100/50 hover:border-slate-200/60 transition-all duration-300 group ${isLastItem ? 'md:col-span-2' : ''}`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-xl ${config.bg} flex items-center justify-center group-hover:scale-105 transition-transform duration-300 shrink-0`}>
+                        {config.icon}
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-xs text-slate-400 font-bold uppercase tracking-wider">{label}</div>
+                        <div className="mt-1 flex items-baseline gap-2">
+                          <span className="text-2xl font-black text-slate-900 tracking-tight">{value}%</span>
+                          <span className="text-xs font-bold text-slate-500">
+                            {label === 'SEO 基础标签' ? '合规率' :
+                             label === '页面结构' ? '合规率' :
+                             label === 'URL 规范化' ? '规范率' :
+                             label === '图片 SEO' ? '优化率' :
+                             label === '内链优化' ? '健康度' : '数量占比'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Progress Bar */}
+                    <div className="mt-4">
+                      <div className="h-1.5 bg-slate-50 rounded-full overflow-hidden border border-slate-100/50">
+                        <motion.div 
+                          className={`h-full rounded-full ${config.bar}`}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${value}%` }}
+                          transition={{ duration: 1, ease: 'easeOut' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1568,106 +2243,504 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
       {auditResults && (
         <div className="space-y-4">
-          <h3 className="font-bold text-slate-900 flex items-center gap-2">
-            <ICONS.AlertTriangle className="text-amber-500" />
-            发现的问题 ({auditResults.issues.length})
-          </h3>
-          <div className="grid grid-cols-1 gap-4">
-            {auditResults.issues.map(issue => {
-              const isExpanded = expandedIssueIds.includes(issue.id);
-              return (
-                <div key={issue.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-500 transition-all overflow-hidden">
-                  <div 
-                    onClick={() => {
-                      if (isExpanded) {
-                        setExpandedIssueIds(expandedIssueIds.filter(id => id !== issue.id));
-                      } else {
-                        setExpandedIssueIds([...expandedIssueIds, issue.id]);
-                      }
-                    }}
-                    className="p-5 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className={`p-2 rounded-lg ${
-                        issue.severity === 'high' ? 'bg-red-50 text-red-600' : 
-                        issue.severity === 'medium' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'
-                      }`}>
-                        <ICONS.AlertTriangle className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            issue.severity === 'high' ? 'bg-red-100 text-red-600' : 
-                            issue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
-                          }`}>
-                            {issue.severity === 'high' ? '高优先级' : issue.severity === 'medium' ? '中优先级' : '低优先级'}
-                          </span>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase">{issue.category}</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <h3 className="font-bold text-slate-900 flex items-center gap-2">
+              <ICONS.AlertTriangle className="text-amber-500" />
+              发现的问题 ({auditResults.issues.length})
+            </h3>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              {isBatchGeneratingSuggestions && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100 animate-pulse">
+                  <ICONS.RefreshCw className="w-3 h-3 animate-spin" />
+                  <span className="text-[11px] font-bold">AI 正在自动生成优化建议...</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {auditViewMode === 'by-issue' ? (
+            <div className="space-y-6">
+              {['SEO 基础标签', '页面结构', 'URL 规范化', '图片 SEO', '内链优化'].map(dimension => {
+                const dimensionIssues = auditResults.issues.filter(issue => issue.category === dimension);
+                const config = getStatConfig(dimension);
+                const scoreValue = auditResults.stats[dimension] ?? 100;
+                
+                return (
+                  <div key={dimension} className="p-5 bg-slate-50/50 rounded-2xl border border-slate-200/60 shadow-sm space-y-4">
+                    {/* Category Header */}
+                    <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-200/60">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl ${config.bg} flex items-center justify-center shrink-0 shadow-xs border border-slate-100/50`}>
+                          {config.icon}
                         </div>
-                        <h4 className="font-bold text-slate-900">{issue.title}</h4>
+                        <div>
+                          <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                            <span>{dimension}</span>
+                          </h4>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        {dimensionIssues.length > 0 ? (
+                          <span className="text-xs font-bold px-3 py-1 bg-amber-50 rounded-lg text-amber-700 border border-amber-200/30 flex items-center gap-1 shadow-2xs">
+                            ⚠️ 发现 {dimensionIssues.length} 项具体问题
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold px-3 py-1 bg-emerald-50 rounded-lg text-emerald-700 border border-emerald-250/20 flex items-center gap-1">
+                            ✨ 检测通过 (100%)
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-slate-400">
-                        {issue.affectedItems?.length || 0} 个受影响项目
-                      </span>
-                      <motion.div
-                        animate={{ rotate: isExpanded ? 180 : 0 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <ICONS.ChevronDown className="w-5 h-5 text-slate-400" />
-                      </motion.div>
+
+                    {/* Specific Issues List */}
+                    <div className="space-y-3">
+                      {dimensionIssues.length > 0 ? (
+                        dimensionIssues.map(issue => {
+                          const isExpanded = expandedIssueIds.includes(issue.id);
+                          return (
+                            <div key={issue.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-500 transition-all overflow-hidden">
+                              <div 
+                                onClick={() => {
+                                  if (isExpanded) {
+                                    setExpandedIssueIds(expandedIssueIds.filter(id => id !== issue.id));
+                                  } else {
+                                    setExpandedIssueIds([...expandedIssueIds, issue.id]);
+                                  }
+                                }}
+                                className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-1.5 rounded-lg ${
+                                    issue.severity === 'high' ? 'bg-red-50 text-red-600' : 
+                                    issue.severity === 'medium' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'
+                                  }`}>
+                                    <ICONS.AlertTriangle className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-0.5">
+                                      <span className={`px-1.5 py-0.2 rounded text-[11px] font-black uppercase ${
+                                        issue.severity === 'high' ? 'bg-red-100 text-red-600' : 
+                                        issue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
+                                      }`}>
+                                        {issue.severity === 'high' ? '主要问题' : issue.severity === 'medium' ? '次要问题' : '改进建议'}
+                                      </span>
+                                    </div>
+                                    <h5 className="font-bold text-slate-800 text-xs">{issue.title}</h5>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1 px-2.5 py-0.5 bg-slate-50 border border-slate-100 rounded-full">
+                                    <span className={`text-[11px] font-black min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center text-center leading-none ${
+                                      issue.severity === 'high' ? 'bg-red-500 text-white shadow-xs' :
+                                      issue.severity === 'medium' ? 'bg-amber-500 text-white shadow-xs' :
+                                      'bg-blue-500 text-white shadow-xs'
+                                    }`}>
+                                      {issue.affectedItems?.length || 0}
+                                    </span>
+                                    <span className="text-[11px] font-bold text-slate-500">
+                                      受影响
+                                    </span>
+                                  </div>
+                                  <motion.div
+                                    animate={{ rotate: isExpanded ? 180 : 0 }}
+                                    transition={{ duration: 0.2 }}
+                                  >
+                                    <ICONS.ChevronDown className="w-4 h-4 text-slate-405" />
+                                  </motion.div>
+                                </div>
+                              </div>
+
+                              <AnimatePresence>
+                                {isExpanded && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    className="border-t border-slate-100 animate-fade-in"
+                                  >
+                                    <div className="p-4 space-y-4 bg-slate-50/50">
+                                      <div className="space-y-1">
+                                        <p className="text-xs text-slate-600 leading-relaxed font-medium">{issue.description}</p>
+                                      </div>
+                                      
+                                      <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-100/50">
+                                        <div className="text-[11px] font-bold text-blue-400 uppercase mb-1">优化和纠正对策</div>
+                                        <p className="text-xs text-blue-700 font-semibold">{issue.recommendation}</p>
+                                      </div>
+
+                                      {/* Directly render Affected Items inside the expanded section */}
+                                      <div className="space-y-2 pt-2 border-t border-slate-150">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide border-b border-dashed border-slate-300">受影响内容明细</span>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-1 gap-2 max-h-[250px] overflow-y-auto pr-1">
+                                          {issue.affectedItems && issue.affectedItems.length > 0 ? (
+                                            issue.affectedItems.map((item, idx) => (
+                                              <div key={idx} className="flex flex-col p-2.5 bg-white border border-slate-100 rounded-xl hover:border-slate-200 hover:shadow-2xs transition-all">
+                                                <div className="flex items-start gap-2.5">
+                                                  {item.image || item.url ? (
+                                                    <img src={item.image || item.url} className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0" alt="" referrerPolicy="no-referrer" />
+                                                  ) : (
+                                                    <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center border border-slate-100 shrink-0">
+                                                      <ICONS.FileText className="w-4 h-4 text-slate-400" />
+                                                    </div>
+                                                  )}
+
+                                                  {item.parentType ? (
+                                                    <div className="flex flex-col min-w-0 flex-1">
+                                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span className="text-xs font-bold text-slate-900 truncate max-w-[200px] sm:max-w-xs" title={item.name}>
+                                                          图片名称: {item.name || '未命名图片'}
+                                                        </span>
+                                                      </div>
+                                                      <div className="mt-1.5 flex flex-col gap-1 text-[11px] text-slate-500 bg-slate-50/70 p-1.5 rounded border border-slate-100/50">
+                                                        <div className="flex items-center gap-1 flex-wrap">
+                                                          <span className="text-slate-400 shrink-0">所处页面:</span>
+                                                          <span className="font-semibold text-slate-700">{item.parentTitle || '未知页面'}</span>
+                                                          <span className="text-slate-300 font-normal">|</span>
+                                                          <a 
+                                                            href={getParentPageUrl(item)} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer" 
+                                                            className="font-mono text-blue-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                                            title="访问图片所处的页面"
+                                                          >
+                                                            <span>{getParentPageUrl(item)}</span>
+                                                            <ICONS.ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                                          </a>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 flex-wrap">
+                                                          <span className="text-slate-400 shrink-0">图片链接:</span>
+                                                          <a 
+                                                            href={item.url} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer" 
+                                                            className="font-mono text-violet-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                                            title="在新标签页中查看大图"
+                                                          >
+                                                            <span className="truncate max-w-[250px]">{item.url}</span>
+                                                            <ICONS.ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                                          </a>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <div className="flex flex-col min-w-0 flex-1">
+                                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span 
+                                                          onClick={() => {
+                                                            const colName = getItemCollectionName(item);
+                                                            let editType = 'page';
+                                                            if (colName === 'products') editType = 'product';
+                                                            else if (colName === 'collections') editType = 'collection';
+                                                            else if (colName === 'blogs') editType = 'blog';
+                                                            else if (colName === 'blogSets') editType = 'blogSet';
+                                                            
+                                                            const url = `${window.location.origin}${window.location.pathname}?editType=${editType}&editId=${item.id}`;
+                                                            window.open(url, '_blank');
+                                                          }}
+                                                          className="text-xs font-bold text-slate-900 hover:text-blue-600 hover:underline cursor-pointer transition-colors flex items-center gap-1 group/title"
+                                                          title="在新窗口中打开并编辑此页面/项目"
+                                                        >
+                                                          <span className="truncate max-w-[200px] sm:max-w-xs">
+                                                            {(() => {
+                                                              const typeStr = getItemCollectionName(item) === 'products' ? '商品' :
+                                                                               getItemCollectionName(item) === 'collections' ? '智能集锦' :
+                                                                               getItemCollectionName(item) === 'blogs' ? '博客文章' :
+                                                                               getItemCollectionName(item) === 'blogSets' ? '博客分集' : '自定义页面';
+                                                              return `${typeStr}：${item.title || item.name}`;
+                                                            })()}
+                                                          </span>
+                                                          <ICONS.ExternalLink className="w-3 h-3 opacity-0 group-hover/title:opacity-100 transition-opacity text-blue-500 shrink-0 inline-block" />
+                                                        </span>
+                                                      </div>
+                                                      <div className="mt-1.5 flex flex-col gap-1 text-[11px] text-slate-500 bg-slate-50/70 p-1.5 rounded border border-slate-100/50">
+                                                        <div className="flex items-center gap-1 flex-wrap">
+                                                          <span className="text-slate-400 shrink-0">页面 URL:</span>
+                                                          <a 
+                                                            href={getItemPageUrl(item)} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer" 
+                                                            className="font-mono text-blue-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                                            title="访问前端展示页面"
+                                                          >
+                                                            <span>{getItemPageUrl(item)}</span>
+                                                            <ICONS.ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                                          </a>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </div>
+
+                                                {/* Quick redirect config for 404 links directly in expanded area */}
+                                                {issue.id === 'links-404' && (
+                                                  <div className="mt-2 text-left pt-2 border-t border-slate-100 flex flex-col gap-1.5">
+                                                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+                                                      <span className="flex items-center gap-1 text-slate-600">🔗 快速配置重定向链接</span>
+                                                      {item.redirectUrl ? (
+                                                        <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-black text-[11px] uppercase tracking-wide">
+                                                          已重定向: {item.redirectUrl}
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-black text-[11px] uppercase tracking-wide">
+                                                          未配置重定向
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                      <input 
+                                                        type="text" 
+                                                        placeholder="目标页面链接 如: /home" 
+                                                        defaultValue={item.redirectUrl || ''}
+                                                        id={`expand-redirect-input-${item.id}`}
+                                                        className="flex-1 px-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-semibold"
+                                                      />
+                                                      <button 
+                                                        onClick={async () => {
+                                                          const inputEl = document.getElementById(`expand-redirect-input-${item.id}`) as HTMLInputElement;
+                                                          const rUrl = inputEl?.value.trim();
+                                                          if (rUrl) {
+                                                            try {
+                                                              const colName = getItemCollectionName(item);
+                                                              await updateDoc(doc(db, colName, item.id), {
+                                                                redirectUrl: rUrl,
+                                                                updatedAt: new Date().toISOString()
+                                                              });
+                                                              toast.success("重定向配置成功！");
+                                                            } catch (err) {
+                                                              toast.error("重定向配置失败，请重新试一下");
+                                                            }
+                                                          } else {
+                                                            toast.error("请输入有效的跳转链接");
+                                                          }
+                                                        }}
+                                                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs"
+                                                      >
+                                                        保存
+                                                      </button>
+                                                      {item.redirectUrl && (
+                                                        <button 
+                                                          onClick={async () => {
+                                                            try {
+                                                              const colName = getItemCollectionName(item);
+                                                              await updateDoc(doc(db, colName, item.id), {
+                                                                redirectUrl: "",
+                                                                updatedAt: new Date().toISOString()
+                                                              });
+                                                              const inputEl = document.getElementById(`expand-redirect-input-${item.id}`) as HTMLInputElement;
+                                                              if (inputEl) inputEl.value = "";
+                                                              toast.success("重定向配置已清除");
+                                                            } catch (err) {
+                                                              toast.error("清除失败，请重新试一下");
+                                                            }
+                                                          }}
+                                                          className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-650 rounded-lg text-xs font-bold transition-all"
+                                                        >
+                                                          清除
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))
+                                          ) : (
+                                            <div className="text-[11px] text-slate-400 py-1.5 text-center">暂无受影响内容</div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex justify-end pt-1">
+                                        <button 
+                                          onClick={() => {
+                                            setActiveTab('fix');
+                                            setAiMode('list');
+                                            if (issue.targetTab) setFixAiTab(issue.targetTab);
+                                            setFixFilterIds(issue.affectedItems?.map(item => item.id) || null);
+                                            setFixFilterStatus('all');
+                                            setActiveFixIssueTitle(issue.title);
+                                            setActiveFixIssueDesc(issue.recommendation);
+                                            onTabChange?.('SEO处理');
+                                          }}
+                                          className="px-4 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm"
+                                        >
+                                          立即处理
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-4 bg-emerald-50/10 rounded-xl border border-dashed border-emerald-250/40 flex items-center gap-3">
+                          <div className="w-7 h-7 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs shrink-0 shadow-3xs">✓</div>
+                          <div className="text-left">
+                            <div className="text-xs font-bold text-emerald-800">该维度表现完美</div>
+                            <p className="text-[11px] text-emerald-600 mt-0.5">做得很好！当前所有检测内容的指标在该维度下均表现优异，无任何待改进缺陷。</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="border-t border-slate-100"
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {issuesByPage.length === 0 ? (
+                <div className="p-8 bg-white border border-slate-200 rounded-2xl text-center space-y-2">
+                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl font-bold">✓</div>
+                  <h4 className="font-bold text-slate-800">未发现任何页面问题</h4>
+                  <p className="text-sm text-slate-500">您的所有页面在当前的本地指标下表现优异！</p>
+                </div>
+              ) : (
+                issuesByPage.map(({ item, itemType, issues }) => {
+                  const isExpanded = expandedPageIds.includes(item.id);
+                  const hasHigh = issues.some(i => i.severity === 'high');
+                  const hasMedium = issues.some(i => i.severity === 'medium');
+                  const maxSeverity = hasHigh ? 'high' : hasMedium ? 'medium' : 'low';
+                  
+                  return (
+                    <div key={item.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:border-blue-500 transition-all overflow-hidden">
+                      <div
+                        onClick={() => {
+                          if (isExpanded) {
+                            setExpandedPageIds(expandedPageIds.filter(id => id !== item.id));
+                          } else {
+                            setExpandedPageIds([...expandedPageIds, item.id]);
+                          }
+                        }}
+                        className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-slate-50 transition-colors"
                       >
-                        <div className="p-5 space-y-4 bg-slate-50/50">
-                          <div className="space-y-1">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase">问题描述</div>
-                            <p className="text-sm text-slate-600 leading-relaxed">{issue.description}</p>
-                          </div>
+                        <div className="flex items-center gap-4 flex-1">
+                          {item.image || item.url ? (
+                            <img src={item.image || item.url} className="w-12 h-12 rounded-lg object-cover border border-slate-200" alt="" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
+                              <ICONS.FileText className="w-6 h-6 text-slate-400" />
+                            </div>
+                          )}
                           
-                          <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                            <div className="text-[10px] font-bold text-blue-400 uppercase mb-1">建议操作</div>
-                            <p className="text-sm text-blue-700 font-medium">{issue.recommendation}</p>
-                          </div>
-
-                          <div className="flex justify-end gap-3 pt-2">
-                            <button 
-                              onClick={() => setSelectedIssue(issue)}
-                              className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all shadow-sm"
-                            >
-                              查看详情
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setActiveTab('fix');
-                                setAiMode('list');
-                                if (issue.targetTab) setAiTab(issue.targetTab);
-                                setFilterIds(issue.affectedItems?.map(item => item.id) || null);
-                                setFilterStatus('all');
-                                onTabChange?.('SEO处理');
-                              }}
-                              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-md shadow-blue-500/20"
-                            >
-                              立即处理
-                            </button>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                                maxSeverity === 'high' ? 'bg-red-50 text-red-600 border border-red-100' : 
+                                maxSeverity === 'medium' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
+                                'bg-blue-50 text-blue-600 border border-blue-100'
+                              }`}>
+                                {maxSeverity === 'high' ? '高风险' : maxSeverity === 'medium' ? '中风险' : '低风险'}
+                              </span>
+                            </div>
+                            <h4 className="font-bold text-slate-900 line-clamp-1">
+                              {(() => {
+                                 let typeStr = itemType;
+                                 if (typeStr === '商品页面') typeStr = '商品';
+                                 else if (typeStr === '分类系列') typeStr = '智能集锦';
+                                 else if (typeStr === '博客目录') typeStr = '博客分集';
+                                 return `${typeStr}：${item.title || item.name}`;
+                              })()}
+                            </h4>
+                            <p className="text-[11px] text-slate-400 font-mono leading-none">{item.seoUrl || item.handle || 'No URL'}</p>
                           </div>
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
+                        
+                        <div className="flex items-center justify-between md:justify-end gap-3 border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
+                          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-lg">
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            <span className="text-xs font-bold text-slate-600">
+                              发现 {issues.length} 个优化点
+                            </span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <motion.div
+                              animate={{ rotate: isExpanded ? 180 : 0 }}
+                              transition={{ duration: 0.2 }}
+                            >
+                              <ICONS.ChevronDown className="w-5 h-5 text-slate-400" />
+                            </motion.div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="border-t border-slate-100 bg-slate-50/50"
+                          >
+                            <div className="p-5 space-y-4">
+                              <div className="flex items-center justify-between pb-3 border-b border-slate-150 flex-wrap gap-2">
+                                <div className="space-y-0.5">
+                                  <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider">该页面存在的问题列表 ({issues.length})</h5>
+                                  <p className="text-[11px] text-slate-400">展开查看详细原因描述与优化建议</p>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setActiveTab('fix');
+                                    setAiMode('list');
+                                    const colName = getItemCollectionName(item);
+                                    setFixAiTab(colName);
+                                    setFixFilterIds([item.id]);
+                                    setFixFilterStatus('all');
+                                    setActiveFixIssueTitle(`页面专项优化：${item.title || item.name}`);
+                                    setActiveFixIssueDesc("针对选定页面检测出的所有 SEO 标签与结构问题，提供页面级一键式 AI 智能修复、文案重写及格式规范。");
+                                    onTabChange?.('SEO处理');
+                                  }}
+                                  className="px-3.5 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 rounded-xl transition-all shadow-md shadow-blue-500/15 flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <ICONS.Zap className="w-3.5 h-3.5 animate-pulse" />
+                                  <span>立即处理页面问题</span>
+                                </button>
+                              </div>
+                              
+                              <div className="grid grid-cols-1 gap-3">
+                                {issues.map(issue => (
+                                  <div key={issue.id} className="p-4 bg-white rounded-xl border border-slate-200/65 shadow-sm flex flex-col md:flex-row md:items-start justify-between gap-4">
+                                    <div className="space-y-2 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                                          issue.severity === 'high' ? 'bg-red-100 text-red-600' : 
+                                          issue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
+                                        }`}>
+                                          {issue.severity === 'high' ? '高优先级' : issue.severity === 'medium' ? '中优先级' : '低优先级'}
+                                        </span>
+                                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                                          CATEGORY_STYLES[issue.category] || 'bg-slate-100 text-slate-600 border border-slate-200/50'
+                                        }`}>
+                                          {issue.category}
+                                        </span>
+                                        <span className="text-xs font-bold text-slate-900">{issue.title}</span>
+                                      </div>
+                                      
+                                      <div className="text-xs text-slate-600 space-y-1">
+                                        <p className="text-blue-700 font-medium bg-blue-50/80 px-2.5 py-1.5 rounded-lg border border-blue-100/50 mt-1">
+                                          <strong>修复建议：</strong>{issue.recommendation}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1691,7 +2764,19 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-900">{selectedIssue.title}</h3>
-                    <p className="text-xs text-slate-500">{selectedIssue.category}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                        CATEGORY_STYLES[selectedIssue.category] || 'bg-slate-100 text-slate-600 border border-slate-200/50'
+                      }`}>
+                        {selectedIssue.category}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
+                        selectedIssue.severity === 'high' ? 'bg-red-100 text-red-600' : 
+                        selectedIssue.severity === 'medium' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'
+                      }`}>
+                        {selectedIssue.severity === 'high' ? '高优先级' : selectedIssue.severity === 'medium' ? '中优先级' : '低优先级'}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <button onClick={() => setSelectedIssue(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
@@ -1713,32 +2798,185 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">受影响的内容 ({selectedIssue.affectedItems?.length})</h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">受影响的内容</h4>
+                    <span className={`px-2 py-0.5 rounded-full font-black text-xs border ${
+                      selectedIssue.severity === 'high' ? 'bg-red-50 text-red-600 border-red-100/50' :
+                      selectedIssue.severity === 'medium' ? 'bg-amber-50 text-amber-600 border-amber-100/50' :
+                      'bg-blue-50 text-blue-600 border-blue-100/50'
+                    }`}>
+                      {selectedIssue.affectedItems?.length || 0}
+                    </span>
+                  </div>
                   <div className="grid grid-cols-1 gap-2">
                     {selectedIssue.affectedItems?.map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="flex items-center gap-3">
-                          {item.image || item.url ? (
-                            <img src={item.image || item.url} className="w-10 h-10 rounded-lg object-cover border border-slate-200" alt="" />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center">
-                              <ICONS.FileText className="w-5 h-5 text-slate-400" />
-                            </div>
-                          )}
-                          <div>
-                            <div className="text-sm font-bold text-slate-900">{item.title || item.name}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">{item.seoUrl || item.handle || 'No URL'}</div>
+                      <div key={idx} className="flex flex-col p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            {item.image || item.url ? (
+                              <img src={item.image || item.url} className="w-10 h-10 rounded-lg object-cover border border-slate-200" alt="" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-lg bg-slate-200 flex items-center justify-center">
+                                <ICONS.FileText className="w-5 h-5 text-slate-400" />
+                              </div>
+                            )}
+                            {item.parentType ? (
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-sm font-bold text-slate-900 truncate max-w-[200px] sm:max-w-xs animate-fade-in" title={item.name}>
+                                    图片名称: {item.name || '未命名图片'}
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 flex flex-col gap-1 text-[11px] text-slate-500 bg-white p-2 rounded-xl border border-slate-100/55">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-slate-400 shrink-0">所处页面:</span>
+                                    <span className="font-semibold text-slate-700">{item.parentTitle || '未知页面'}</span>
+                                    <span className="text-slate-300 font-normal">|</span>
+                                    <a 
+                                      href={getParentPageUrl(item)} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="font-mono text-blue-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                      title="访问图片所处的页面"
+                                    >
+                                      <span>{getParentPageUrl(item)}</span>
+                                      <ICONS.ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                    </a>
+                                  </div>
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-slate-400 shrink-0">图片链接:</span>
+                                    <a 
+                                      href={item.url} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="font-mono text-violet-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                      title="在新标签页中查看大图"
+                                    >
+                                      <span className="truncate max-w-[300px]">{item.url}</span>
+                                      <ICONS.ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span 
+                                    onClick={() => {
+                                      const colName = getItemCollectionName(item);
+                                      let editType = 'page';
+                                      if (colName === 'products') editType = 'product';
+                                      else if (colName === 'collections') editType = 'collection';
+                                      else if (colName === 'blogs') editType = 'blog';
+                                      else if (colName === 'blogSets') editType = 'blogSet';
+                                      
+                                      const url = `${window.location.origin}${window.location.pathname}?editType=${editType}&editId=${item.id}`;
+                                      window.open(url, '_blank');
+                                    }}
+                                    className="text-sm font-bold text-slate-900 hover:text-blue-600 hover:underline cursor-pointer transition-colors flex items-center gap-1.5 group/title"
+                                    title="在新窗口中打开并编辑此页面/项目"
+                                  >
+                                    <span>
+                                      {(() => {
+                                        const typeStr = getItemCollectionName(item) === 'products' ? '商品' :
+                                                         getItemCollectionName(item) === 'collections' ? '智能集锦' :
+                                                         getItemCollectionName(item) === 'blogs' ? '博客文章' :
+                                                         getItemCollectionName(item) === 'blogSets' ? '博客分集' : '自定义页面';
+                                        return `${typeStr}：${item.title || item.name}`;
+                                      })()}
+                                    </span>
+                                    <ICONS.ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover/title:opacity-100 transition-opacity text-blue-500 shrink-0 inline-block" />
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 flex flex-col gap-1 text-[11px] text-slate-500 bg-white p-2 rounded-xl border border-slate-100/55">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-slate-400 shrink-0">页面 URL:</span>
+                                    <a 
+                                      href={getItemPageUrl(item)} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="font-mono text-blue-600 hover:underline font-semibold flex items-center gap-0.5 break-all"
+                                      title="访问前端展示页面"
+                                    >
+                                      <span>{getItemPageUrl(item)}</span>
+                                      <ICONS.ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <button 
-                          onClick={() => {
-                            setEditingItem(item);
-                            setIsEditModalOpen(true);
-                          }}
-                          className="text-xs font-bold text-blue-600 hover:text-blue-700"
-                        >
-                          编辑
-                        </button>
+
+                        {selectedIssue.id === 'links-404' && (
+                          <div className="mt-3 pt-3 border-t border-slate-200/50 flex flex-col gap-2">
+                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+                              <span className="flex items-center gap-1 text-slate-600">🔗 快速配置重定向链接</span>
+                              {item.redirectUrl ? (
+                                <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-black text-[11px] uppercase tracking-wide">
+                                  已重定向: {item.redirectUrl}
+                                </span>
+                              ) : (
+                                <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-black text-[11px] uppercase tracking-wide">
+                                  未配置重定向
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input 
+                                type="text" 
+                                placeholder="目标页面链接 如: /home 或 https://..." 
+                                defaultValue={item.redirectUrl || ''}
+                                id={`detail-redirect-input-${item.id}`}
+                                className="flex-1 px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-blue-500 font-semibold"
+                              />
+                              <button 
+                                onClick={async () => {
+                                  const inputEl = document.getElementById(`detail-redirect-input-${item.id}`) as HTMLInputElement;
+                                  const rUrl = inputEl?.value.trim();
+                                  if (rUrl) {
+                                    try {
+                                      const colName = getItemCollectionName(item);
+                                      await updateDoc(doc(db, colName, item.id), {
+                                        redirectUrl: rUrl,
+                                        updatedAt: new Date().toISOString()
+                                      });
+                                      toast.success("重定向配置成功！");
+                                    } catch (err) {
+                                      toast.error("重定向配置失败，请重试");
+                                    }
+                                  } else {
+                                    toast.error("请输入有效的跳转链接");
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm"
+                              >
+                                保存
+                              </button>
+                              {item.redirectUrl && (
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      const colName = getItemCollectionName(item);
+                                      await updateDoc(doc(db, colName, item.id), {
+                                        redirectUrl: "",
+                                        updatedAt: new Date().toISOString()
+                                      });
+                                      const inputEl = document.getElementById(`detail-redirect-input-${item.id}`) as HTMLInputElement;
+                                      if (inputEl) inputEl.value = "";
+                                      toast.success("重定向配置已清除");
+                                    } catch (err) {
+                                      toast.error("清除失败，请重试");
+                                    }
+                                  }}
+                                  className="px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-bold transition-all"
+                                >
+                                  清除
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1756,9 +2994,11 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   onClick={() => {
                     setActiveTab('fix');
                     setAiMode('list');
-                    if (selectedIssue.targetTab) setAiTab(selectedIssue.targetTab);
-                    setFilterIds(selectedIssue.affectedItems?.map(item => item.id) || null);
-                    setFilterStatus('all');
+                    if (selectedIssue.targetTab) setFixAiTab(selectedIssue.targetTab);
+                    setFixFilterIds(selectedIssue.affectedItems?.map(item => item.id) || null);
+                    setFixFilterStatus('all');
+                    setActiveFixIssueTitle(selectedIssue.title);
+                    setActiveFixIssueDesc(selectedIssue.recommendation);
                     setSelectedIssue(null);
                     onTabChange?.('SEO处理');
                   }}
@@ -1779,25 +3019,46 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
     // Similar to renderAiTab but focused on fixing
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between bg-blue-50/50 p-4 rounded-2xl border border-blue-100 mb-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between bg-blue-50/50 p-4 rounded-2xl border border-blue-100 gap-4 mb-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
               <ICONS.Zap className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-900">问题修复模式</h3>
-              <p className="text-xs text-slate-500">正在针对检测出的 {filterIds?.length || '全部'} 个问题进行专项优化</p>
+              <h3 className="font-bold text-slate-900">{activeFixIssueTitle || '问题修复模式'}</h3>
+              <p className="text-xs text-slate-500">
+                {fixFilterIds !== null 
+                  ? activeFixIssueDesc || "已开启单个页面专项优化筛选，仅展示当前选定页面的检测问题。" 
+                  : `正在针对检测出的 ${filterIds?.length || '全部'} 个问题进行专项优化`
+                }
+              </p>
             </div>
           </div>
-          <button 
-            onClick={() => {
-              setActiveTab('audit');
-              onTabChange?.('SEO检测');
-            }}
-            className="px-4 py-2 bg-white text-slate-600 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-all"
-          >
-            返回检测报告
-          </button>
+          <div className="flex items-center gap-2">
+            {fixFilterIds !== null && (
+              <button 
+                onClick={() => {
+                  setFixFilterIds(null);
+                  setActiveFixIssueTitle('');
+                  setActiveFixIssueDesc('');
+                  toast.success("已清除单个页面筛选，已恢复显示全部内容");
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <ICONS.RefreshCw className="w-3.5 h-3.5" />
+                显示全部问题
+              </button>
+            )}
+            <button 
+              onClick={() => {
+                setActiveTab('audit');
+                onTabChange?.('SEO检测');
+              }}
+              className="px-4 py-2 bg-white text-slate-600 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 transition-all cursor-pointer"
+            >
+              返回检测报告
+            </button>
+          </div>
         </div>
         {renderAiTab()}
       </div>
@@ -1840,7 +3101,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 <ICONS.TrendingUp className="text-blue-500" />
                 关键词排名趋势
               </h3>
-              <p className="text-[10px] text-slate-400">基于核心关键词每日平均排名计算</p>
+              <p className="text-[11px] text-slate-400">基于核心关键词每日平均排名计算</p>
             </div>
             <select className="text-xs font-bold text-slate-500 bg-slate-50 border-none rounded-lg px-2 py-1 outline-none">
               <option>最近 7 天</option>
@@ -1851,8 +3112,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={rankingData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                <YAxis reversed axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <YAxis reversed axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
                 <Tooltip 
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
@@ -1871,10 +3132,10 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
               <ICONS.Search className="text-blue-500" />
               有机搜索词来源
             </h3>
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Top 5 关键词</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Top 5 关键词</span>
           </div>
           <div className="space-y-3">
-            <div className="grid grid-cols-4 text-[10px] font-bold text-slate-400 uppercase px-2">
+            <div className="grid grid-cols-4 text-[11px] font-bold text-slate-400 uppercase px-2">
               <div className="col-span-1">关键词</div>
               <div className="text-right">点击量</div>
               <div className="text-right">点击率</div>
@@ -1890,7 +3151,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
             ))}
           </div>
           <div className="mt-4 pt-4 border-t border-slate-100 flex justify-center">
-            <button className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <button className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
               查看全部 128 个关键词 <ICONS.ChevronRight className="w-3 h-3" />
             </button>
           </div>
@@ -1952,7 +3213,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   </div>
                   <div>
                     <div className="text-sm font-bold text-slate-900">{change.keyword}</div>
-                    <div className="text-[10px] text-slate-400 font-bold uppercase">当前排名: #{change.current}</div>
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">当前排名: #{change.current}</div>
                   </div>
                 </div>
                 <div className={`text-sm font-black ${change.trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
@@ -2023,7 +3284,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 <span className="font-bold text-slate-900">{comp.name}</span>
                 <div className="flex items-center gap-2">
                   {comp.name === '您的店铺' ? (
-                    <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded">当前</span>
+                    <span className="px-2 py-0.5 bg-blue-600 text-white text-[11px] font-bold rounded">当前</span>
                   ) : (
                     <button 
                       onClick={() => setCompetitorData(prev => prev.filter((_, idx) => idx !== i))}
@@ -2092,21 +3353,21 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 <span className="text-xs text-slate-500">平均排名</span>
                 <div className="flex items-center gap-1">
                   <span className="text-sm font-bold text-slate-900">#12</span>
-                  <span className="text-[10px] text-green-600 font-bold">↑ 73%</span>
+                  <span className="text-[11px] text-green-600 font-bold">↑ 73%</span>
                 </div>
               </div>
               <div className="flex justify-between mb-2">
                 <span className="text-xs text-slate-500">点击率 (CTR)</span>
                 <div className="flex items-center gap-1">
                   <span className="text-sm font-bold text-slate-900">4.5%</span>
-                  <span className="text-[10px] text-green-600 font-bold">↑ 275%</span>
+                  <span className="text-[11px] text-green-600 font-bold">↑ 275%</span>
                 </div>
               </div>
               <div className="flex justify-between">
                 <span className="text-xs text-slate-500">月有机流量</span>
                 <div className="flex items-center gap-1">
                   <span className="text-sm font-bold text-slate-900">12,450</span>
-                  <span className="text-[10px] text-green-600 font-bold">↑ 289%</span>
+                  <span className="text-[11px] text-green-600 font-bold">↑ 289%</span>
                 </div>
               </div>
             </div>
@@ -2127,7 +3388,9 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
               setActiveTab('fix');
               onTabChange?.('SEO处理');
               setAiMode('list');
-              setFilterStatus('needs_optimization');
+              setFixFilterStatus('needs_optimization');
+              setActiveFixIssueTitle('');
+              setActiveFixIssueDesc('');
             }}
             className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black shadow-lg hover:scale-105 transition-all flex items-center gap-3 whitespace-nowrap"
           >
@@ -2196,16 +3459,6 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
   const renderBlogTab = () => (
     <div className="space-y-8">
       <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-            <ICONS.FileText className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-900">SEO 博客管理</h2>
-            <p className="text-slate-500 text-sm">利用 AI 生成高质量、SEO 友好的博客文章，提升站点流量。</p>
-          </div>
-        </div>
-        
         <SEOBlogManager 
           products={products} 
           pages={pages}
@@ -2218,31 +3471,55 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           customBlogTopicsManualPrompt={customPrompts.blogTopicsManual}
           strategy={aiAnalysis?.strategy}
           selectedKeywords={selectedKeywords}
+          onRegisterEditActions={setBlogEditActions}
         />
       </div>
     </div>
   );
 
+  // Dynamic tab switching for SEO Management mode
   useEffect(() => {
-    if (filterStatus === 'needs_optimization' || filterIds !== null) {
+    if (globalFilterStatus === 'needs_optimization' || globalFilterIds !== null) {
       const tabs = [
-        { id: 'products', count: getNeedsOptimizationCount(products, 'product', filterIds) },
-        { id: 'collections', count: getNeedsOptimizationCount(collections, 'collection', filterIds) },
-        { id: 'blogs', count: getNeedsOptimizationCount(blogs, 'blog', filterIds) },
-        { id: 'blogSets', count: getNeedsOptimizationCount(blogSets, 'blogSet', filterIds) },
-        { id: 'pages', count: getNeedsOptimizationCount(pages, 'page', filterIds) },
-        { id: 'images', count: getNeedsOptimizationCount(allImages, 'images', filterIds) },
+        { id: 'products', count: getNeedsOptimizationCount(products, 'product', globalFilterIds) },
+        { id: 'collections', count: getNeedsOptimizationCount(collections, 'collection', globalFilterIds) },
+        { id: 'blogs', count: getNeedsOptimizationCount(blogs, 'blog', globalFilterIds) },
+        { id: 'blogSets', count: getNeedsOptimizationCount(blogSets, 'blogSet', globalFilterIds) },
+        { id: 'pages', count: getNeedsOptimizationCount(pages, 'page', globalFilterIds) },
+        { id: 'images', count: getNeedsOptimizationCount(allImages, 'images', globalFilterIds) },
       ];
       
-      const currentTabVisible = (tabs.find(t => t.id === aiTab)?.count || 0) > 0;
+      const currentTabVisible = (tabs.find(t => t.id === globalAiTab)?.count || 0) > 0;
       if (!currentTabVisible) {
         const firstVisibleTab = tabs.find(t => t.count > 0);
         if (firstVisibleTab) {
-          setAiTab(firstVisibleTab.id as any);
+          setGlobalAiTab(firstVisibleTab.id as any);
         }
       }
     }
-  }, [filterStatus, filterIds, products, collections, blogs, blogSets, pages, allImages, aiTab]);
+  }, [globalFilterStatus, globalFilterIds, products, collections, blogs, blogSets, pages, allImages, globalAiTab]);
+
+  // Dynamic tab switching for SEO Fix mode
+  useEffect(() => {
+    if (fixFilterStatus === 'needs_optimization' || fixFilterIds !== null) {
+      const tabs = [
+        { id: 'products', count: getNeedsOptimizationCount(products, 'product', fixFilterIds) },
+        { id: 'collections', count: getNeedsOptimizationCount(collections, 'collection', fixFilterIds) },
+        { id: 'blogs', count: getNeedsOptimizationCount(blogs, 'blog', fixFilterIds) },
+        { id: 'blogSets', count: getNeedsOptimizationCount(blogSets, 'blogSet', fixFilterIds) },
+        { id: 'pages', count: getNeedsOptimizationCount(pages, 'page', fixFilterIds) },
+        { id: 'images', count: getNeedsOptimizationCount(allImages, 'images', fixFilterIds) },
+      ];
+      
+      const currentTabVisible = (tabs.find(t => t.id === fixAiTab)?.count || 0) > 0;
+      if (!currentTabVisible) {
+        const firstVisibleTab = tabs.find(t => t.count > 0);
+        if (firstVisibleTab) {
+          setFixAiTab(firstVisibleTab.id as any);
+        }
+      }
+    }
+  }, [fixFilterStatus, fixFilterIds, products, collections, blogs, blogSets, pages, allImages, fixAiTab]);
 
   const renderAiTab = () => {
     const items = (() => {
@@ -2259,7 +3536,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   parentType: 'product',
                   parentId: p.id,
                   parentTitle: p.title,
-                  pageUrl: p.seoUrl || `/products/${p.id}`
+                  pageUrl: p.seoUrl || `/products/${p.id}`,
+                  seoOptimized: p.seoOptimized || false
                 });
               }
             });
@@ -2275,7 +3553,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 parentType: 'collection',
                 parentId: c.id,
                 parentTitle: c.title,
-                pageUrl: c.seoUrl || `/collections/${c.id}`
+                pageUrl: c.seoUrl || `/collections/${c.id}`,
+                seoOptimized: c.seoOptimized || false
               });
             }
           });
@@ -2290,7 +3569,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 parentType: 'blog',
                 parentId: b.id,
                 parentTitle: b.title,
-                pageUrl: b.seoUrl || `/blogs/${b.id}`
+                pageUrl: b.seoUrl || `/blogs/${b.id}`,
+                seoOptimized: b.seoOptimized || false
               });
             }
           });
@@ -2317,6 +3597,11 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         // Status filter
         const matchesStatus = (() => {
           if (filterStatus === 'all') return true;
+          
+          if (item.seoOptimized) {
+            if (filterStatus === 'optimized' || filterStatus === 'filled') return true;
+            if (filterStatus === 'needs_optimization' || filterStatus === 'empty') return false;
+          }
           
           const isEmpty = aiTab === 'images' 
             ? !item.altText 
@@ -2440,7 +3725,9 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
           onChange={handleKeywordImport}
         />
         {aiMode === 'list' && (
-          <div className="flex items-center justify-between">
+          <>
+            <StrategyBanner />
+            <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl w-fit">
                 <button 
@@ -2451,7 +3738,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   商品
                   {getNeedsOptimizationCount(products, 'product', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(products, 'product', filterIds)}
                     </span>
                   )}
@@ -2464,7 +3751,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   集合
                   {getNeedsOptimizationCount(collections, 'collection', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(collections, 'collection', filterIds)}
                     </span>
                   )}
@@ -2477,7 +3764,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   博客
                   {getNeedsOptimizationCount(blogs, 'blog', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(blogs, 'blog', filterIds)}
                     </span>
                   )}
@@ -2490,7 +3777,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   博客集
                   {getNeedsOptimizationCount(blogSets, 'blogSet', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(blogSets, 'blogSet', filterIds)}
                     </span>
                   )}
@@ -2503,7 +3790,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   页面
                   {getNeedsOptimizationCount(pages, 'page', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(pages, 'page', filterIds)}
                     </span>
                   )}
@@ -2516,7 +3803,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   图片
                   {getNeedsOptimizationCount(allImages, 'images', filterIds) > 0 && (
-                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-red-100 text-red-600 rounded-full text-[11px]">
                       {getNeedsOptimizationCount(allImages, 'images', filterIds)}
                     </span>
                   )}
@@ -2560,7 +3847,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                       value={selectedPageId}
                       onChange={setSelectedPageId}
                       placeholder="所有页面"
-                      className="max-w-[180px]"
+                      className="max-w-[150px]"
                     />
 
                     <SearchableSelect
@@ -2568,7 +3855,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                       value={selectedProductId}
                       onChange={setSelectedProductId}
                       placeholder="所有商品"
-                      className="max-w-[180px]"
+                      className="max-w-[150px]"
                     />
                   </>
                 )}
@@ -2585,13 +3872,142 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   onChange={(val) => setFilterStatus(val as any)}
                   placeholder="全部内容"
                 />
+
+                {isImageTab && items.filter((img: any) => (img.size || 0) > 200 * 1024).length > 0 && (
+                  <motion.button
+                    whileHover={{ scale: 1.02, y: -0.5 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => handleCompressAllLargeImages(items.filter((img: any) => (img.size || 0) > 200 * 1024))}
+                    disabled={batchIsOptimizingField !== null}
+                    className="relative overflow-hidden px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl font-bold transition-all text-sm flex items-center gap-2 cursor-pointer disabled:opacity-50 shrink-0 shadow-md shadow-amber-500/10 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  >
+                    {batchIsOptimizingField === 'compress' ? (
+                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}>
+                        <ICONS.RefreshCw className="w-4 h-4 text-white" />
+                      </motion.div>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-amber-100 shrink-0">
+                        <path d="M4 14V4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10" />
+                        <rect x="2" y="16" width="20" height="6" rx="1" fill="currentColor" fillOpacity="0.2" stroke="none" />
+                        <path d="m9 10 3 3 3-3" />
+                        <path d="M12 4v9" strokeWidth="2.5" />
+                      </svg>
+                    )}
+                    <span>压缩全部过大图片 ({items.filter((img: any) => (img.size || 0) > 200 * 1024).length})</span>
+                  </motion.button>
+                )}
               </div>
             </div>
           </div>
+          </>
         )}
 
         {aiMode === 'chat' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="space-y-6">
+            {/* SEO Optimization Timeline */}
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gradient-to-br from-indigo-900 to-slate-900 rounded-[32px] p-8 text-white shadow-xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                <ICONS.TrendingUp className="w-64 h-64 rotate-12" />
+              </div>
+              
+              <div className="relative z-10 space-y-8">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-2">
+                    <h2 className="text-3xl font-black tracking-tight">你的 SEO 优化时间线</h2>
+                    <p className="text-indigo-200 font-medium max-w-2xl leading-relaxed">
+                      SEO 是一项长期投入。Google 从发现到认可你的优化，一般会经历的阶段与预期效果。
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-5 py-3 rounded-2xl border border-white/10 self-start">
+                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
+                    <span className="text-sm font-bold tracking-wide uppercase">AI Engine Active</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 relative">
+                  {/* Progress Line - Desktop Only */}
+                  <div className="hidden lg:block absolute top-12 left-8 right-8 h-0.5 bg-white/10 z-0" />
+                  
+                  {[
+                    { 
+                      time: "第 1 周", 
+                      title: "基础搭建", 
+                      desc: "生成 SEO策略，优化商品标签与图片替代文本 (alt) 和页面元标签 (meta)。",
+                      icon: <ICONS.Zap className="w-5 h-5" />,
+                      color: "bg-blue-500",
+                      glow: "shadow-blue-500/50"
+                    },
+                    { 
+                      time: "第 1–2 周", 
+                      title: "Google 发现改动", 
+                      desc: "Google 爬虫抓取并收录你新增 / 更新的内容，此过程自动进行。",
+                      icon: <ICONS.Search className="w-5 h-5" />,
+                      color: "bg-indigo-500",
+                      glow: "shadow-indigo-500/50"
+                    },
+                    { 
+                      time: "第 3–6 周", 
+                      title: "展现量开始上升", 
+                      desc: "开始出现在搜索结果中。建议绑定 GSC 跟踪数据。",
+                      icon: <ICONS.TrendingUp className="w-5 h-5" />,
+                      color: "bg-purple-500",
+                      glow: "shadow-purple-500/50"
+                    },
+                    { 
+                      time: "第 6–12 周", 
+                      title: "排名逐步提升", 
+                      desc: "在长尾关键词上获得排名：商品名、SKU 变体、细分搜索等。",
+                      icon: <ICONS.Analysis className="w-5 h-5" />,
+                      color: "bg-pink-500",
+                      glow: "shadow-pink-500/50"
+                    },
+                    { 
+                      time: "第 3–6 个月", 
+                      title: "流量显著增长", 
+                      desc: "在有竞争度的关键词上获得稳定排名，SEO 飞轮正式启动。",
+                      icon: <ICONS.Zap className="w-5 h-5" />,
+                      color: "bg-orange-500",
+                      glow: "shadow-orange-500/50"
+                    },
+                    { 
+                      time: "第 6–12 个月", 
+                      title: "表现稳定强势", 
+                      desc: "在竞争激烈的类目上获得稳健的市场份额与流量转化。",
+                      icon: <ICONS.Globe className="w-5 h-5" />,
+                      color: "bg-emerald-500",
+                      glow: "shadow-emerald-500/50"
+                    }
+                  ].map((step, idx) => (
+                    <motion.div 
+                      key={idx}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: idx * 0.1 }}
+                      className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-5 space-y-4 relative z-10 flex flex-col group hover:bg-white/10 transition-all hover:border-white/20"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black tracking-widest text-indigo-300 uppercase">{step.time}</span>
+                        <div className={`w-10 h-10 ${step.color} rounded-xl flex items-center justify-center shadow-lg ${step.glow} group-hover:scale-110 transition-transform`}>
+                          {step.icon}
+                        </div>
+                      </div>
+                      <div className="space-y-2 flex-1">
+                        <h4 className="text-sm font-black text-white leading-tight">{step.title}</h4>
+                        <p className="text-[11px] text-indigo-100/60 leading-relaxed font-medium">
+                          {step.desc}
+                        </p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 space-y-6">
               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="mb-4">
@@ -2634,8 +4050,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         <ICONS.CheckCircle className="w-8 h-8 text-blue-500" />
                         <div className="text-center">
                           <p className="text-sm font-bold text-slate-900">{uploadedFile?.name || savedFileName}</p>
-                          {uploadedFile && <p className="text-[10px] text-slate-500">{(uploadedFile.size / 1024).toFixed(1)} KB</p>}
-                          {!uploadedFile && savedFileName && <p className="text-[10px] text-slate-400">已保存的文件</p>}
+                          {uploadedFile && <p className="text-[11px] text-slate-500">{(uploadedFile.size / 1024).toFixed(1)} KB</p>}
+                          {!uploadedFile && savedFileName && <p className="text-[11px] text-slate-400">已保存的文件</p>}
                         </div>
                         <button 
                           onClick={(e) => {
@@ -2644,7 +4060,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             setSavedFileName(null);
                             if (fileInputRef.current) fileInputRef.current.value = '';
                           }}
-                          className="text-[10px] font-bold text-red-500 hover:text-red-600 underline"
+                          className="text-[11px] font-bold text-red-500 hover:text-red-600 underline"
                         >
                           移除文件
                         </button>
@@ -2656,37 +4072,47 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         </div>
                         <div className="text-center">
                           <p className="text-sm font-bold text-slate-600">点击或拖拽上传文件</p>
-                          <p className="text-[10px] text-slate-400">支持 PDF, Word, TXT 等格式</p>
+                          <p className="text-[11px] text-slate-400">支持 PDF, Word, TXT 等格式</p>
                         </div>
                       </>
                     )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 gap-4 mb-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">目标市场</label>
-                    <div className="relative">
-                      <select 
-                        value={targetMarket}
-                        onChange={(e) => setTargetMarket(e.target.value)}
-                        className="w-full p-2.5 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500 transition-all appearance-none cursor-pointer"
-                      >
-                        <option value="美国">美国</option>
-                        <option value="英国">英国</option>
-                        <option value="德国">德国</option>
-                        <option value="法国">法国</option>
-                        <option value="日本">日本</option>
-                        <option value="加拿大">加拿大</option>
-                        <option value="澳大利亚">澳大利亚</option>
-                      </select>
-                      <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ICONS.ChevronDown className="w-4 h-4" />
-                      </div>
-                    </div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">目标市场 (可多选)</label>
+                    <SearchableSelect
+                      multiple
+                      options={[
+                        { id: '美国', title: '美国' },
+                        { id: '英国', title: '英国' },
+                        { id: '德国', title: '德国' },
+                        { id: '法国', title: '法国' },
+                        { id: '日本', title: '日本' },
+                        { id: '加拿大', title: '加拿大' },
+                        { id: '澳大利亚', title: '澳大利亚' },
+                        { id: '新加坡', title: '新加坡' },
+                        { id: '东南亚', title: '东南亚' },
+                        { id: '拉美', title: '拉美' }
+                      ]}
+                      value={targetMarket}
+                      onChange={(val) => {
+                        if (val.length > 0) {
+                          setTargetMarket(val);
+                        } else {
+                          toast.error("请至少选择一个目标市场");
+                        }
+                      }}
+                      placeholder="选择目标市场"
+                      className="w-full"
+                    />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 mb-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1.5">目标语言</label>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">目标语言</label>
                     <div className="relative">
                       <select 
                         value={targetLanguage}
@@ -2745,7 +4171,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
                 <div className="flex items-center gap-2 mb-4 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
                   <ICONS.AlertTriangle className="w-4 h-4 text-blue-500" />
-                  <span className="text-[10px] text-blue-700">提示：描述越详细，AI 生成的建议越精准。</span>
+                  <span className="text-[11px] text-blue-700">提示：描述越详细，AI 生成的建议越精准。</span>
                 </div>
                 <button 
                   onClick={handleAnalyzeSite}
@@ -2794,13 +4220,13 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             <div className="flex gap-2">
                               <button 
                                 onClick={() => setSelectedKeywords(editableKeywords)}
-                                className="text-[10px] font-bold text-blue-600 hover:underline"
+                                className="text-[11px] font-bold text-blue-600 hover:underline"
                               >
                                 全选
                               </button>
                               <button 
                                 onClick={() => setSelectedKeywords([])}
-                                className="text-[10px] font-bold text-slate-400 hover:underline"
+                                className="text-[11px] font-bold text-slate-400 hover:underline"
                               >
                                 取消全选
                               </button>
@@ -2846,7 +4272,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                                   : 'bg-slate-50 text-slate-400 border-slate-100 opacity-60 hover:opacity-100'
                               }`}
                             >
-                              {selectedKeywords.includes(kw) && <span className="text-[10px]">✓</span>}
+                              {selectedKeywords.includes(kw) && <span className="text-[11px]">✓</span>}
                               {kw}
                               <button 
                                 onClick={(e) => {
@@ -2893,6 +4319,33 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         >
                           保存策略
                         </button>
+                        <div className="flex-1 relative">
+                          {showResetConfirm ? (
+                            <div className="absolute inset-0 flex gap-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <button 
+                                onClick={handleResetGlobalStrategy}
+                                disabled={isResetting}
+                                className="flex-1 bg-red-600 text-white rounded-2xl font-bold text-sm hover:bg-red-700 transition-all flex items-center justify-center"
+                              >
+                                {isResetting ? '清空中...' : '确认清空'}
+                              </button>
+                              <button 
+                                onClick={() => setShowResetConfirm(false)}
+                                className="flex-1 bg-slate-200 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-300 transition-all"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : null}
+                          <button 
+                            onClick={() => setShowResetConfirm(true)}
+                            disabled={isExecuting || isAnalyzing || isResetting}
+                            className={`w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold hover:bg-red-100 transition-all border border-red-100 flex items-center justify-center gap-2 ${showResetConfirm ? 'opacity-0 invisible' : 'opacity-100 visible'}`}
+                          >
+                            <ICONS.Trash className="w-4 h-4" />
+                            清空保存
+                          </button>
+                        </div>
                         <button 
                           onClick={() => {
                             setAiAnalysis(null);
@@ -2903,7 +4356,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           }}
                           className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
                         >
-                          重新生成
+                          重置当前
                         </button>
                       </div>
                     </div>
@@ -2946,9 +4399,10 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
               </AnimatePresence>
             </div>
           </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="flex items-center justify-end">
+        </div>
+      ) : (
+        <div className="space-y-6">
+            <div className="flex items-center justify-end gap-3">
               {selectedItems.length > 0 && (
                 <motion.div 
                   initial={{ opacity: 0, y: 10 }}
@@ -2957,7 +4411,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 >
                   <span className="text-xs font-bold">已选择 {selectedItems.length} 项</span>
                   
-                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
                     {aiTab === 'images' ? (
                       <>
                         <button 
@@ -2973,60 +4427,10 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           AI 批量优化 Alt
                         </button>
 
-                        <button 
-                          onClick={handleBatchCompressImages}
-                          disabled={batchIsOptimizingField !== null}
-                          className="px-3 py-1 bg-white text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all flex items-center gap-2 disabled:opacity-50"
-                        >
-                          {batchIsOptimizingField === 'compress' ? (
-                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                              <ICONS.RefreshCw className="w-3 h-3" />
-                            </motion.div>
-                          ) : <ICONS.Minimize className="w-3 h-3" />}
-                          批量压缩图片
-                        </button>
+
                       </>
                     ) : (
                       <>
-                        <button 
-                          onClick={() => handleBatchOptimizeField('seoTitle')}
-                          disabled={batchIsOptimizingField !== null}
-                          className="px-3 py-1 bg-white text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all flex items-center gap-2 disabled:opacity-50"
-                        >
-                          {batchIsOptimizingField === 'seoTitle' ? (
-                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                              <ICONS.RefreshCw className="w-3 h-3" />
-                            </motion.div>
-                          ) : <ICONS.Zap className="w-3 h-3" />}
-                          AI 优化 SEO 标题
-                        </button>
-
-                        <button 
-                          onClick={() => handleBatchOptimizeField('seoDescription')}
-                          disabled={batchIsOptimizingField !== null}
-                          className="px-3 py-1 bg-white text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all flex items-center gap-2 disabled:opacity-50"
-                        >
-                          {batchIsOptimizingField === 'seoDescription' ? (
-                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                              <ICONS.RefreshCw className="w-3 h-3" />
-                            </motion.div>
-                          ) : <ICONS.Zap className="w-3 h-3" />}
-                          AI 优化 SEO 描述
-                        </button>
-
-                        <button 
-                          onClick={() => handleBatchOptimizeField('seoUrl')}
-                          disabled={batchIsOptimizingField !== null}
-                          className="px-3 py-1 bg-white text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all flex items-center gap-2 disabled:opacity-50"
-                        >
-                          {batchIsOptimizingField === 'seoUrl' ? (
-                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                              <ICONS.RefreshCw className="w-3 h-3" />
-                            </motion.div>
-                          ) : <ICONS.Zap className="w-3 h-3" />}
-                          AI 优化 Handle
-                        </button>
-
                         <button 
                           onClick={() => handleBatchOptimizeField('all')}
                           disabled={batchIsOptimizingField !== null}
@@ -3037,15 +4441,20 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                               <ICONS.RefreshCw className="w-3 h-3" />
                             </motion.div>
                           ) : <ICONS.Zap className="w-3 h-3" />}
-                          全部AI优化
+                          批量 AI 优化
                         </button>
 
                         <button 
-                          onClick={() => setIsBatchKeywordModalOpen(true)}
-                          className="px-3 py-1 bg-white/10 text-white rounded-lg text-xs font-bold hover:bg-white/20 transition-all flex items-center gap-2"
+                          onClick={handleBatchAdopt}
+                          disabled={batchIsOptimizingField !== null}
+                          className="px-3 py-1 bg-white text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-50 transition-all flex items-center gap-2 disabled:opacity-50"
                         >
-                          <ICONS.Plus className="w-3 h-3" />
-                          批量增加关键词
+                          {batchIsOptimizingField === 'adopt' ? (
+                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                              <ICONS.RefreshCw className="w-3 h-3" />
+                            </motion.div>
+                          ) : <ICONS.CheckCircle className="w-3 h-3" />}
+                          批量采纳
                         </button>
                       </>
                     )}
@@ -3079,21 +4488,29 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         }}
                       />
                     </th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap">
-                      {isImageTab ? '图片预览' : (aiTab === 'products' ? '商品标题' : '标题')}
-                    </th>
+                    <th className="px-2 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[60px]">优先级</th>
+                    {isImageTab ? (
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[100px] min-w-[100px] max-w-[100px]">
+                        图片预览
+                      </th>
+                    ) : (
+                      <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[300px] min-w-[300px] max-w-[300px]">
+                        {aiTab === 'products' ? '商品标题' : '标题'}
+                      </th>
+                    )}
                     {isImageTab ? (
                       <>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[240px] min-w-[240px] max-w-[240px]">图片名称</th>
                         <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap">所在页面</th>
                         <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap">大小</th>
                         <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap">Alt 文本</th>
                       </>
                     ) : (
                       <>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap min-w-[220px]">关键词</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px]">SEO 标题</th>
-                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px]">SEO 描述</th>
-                        <th className="px-3 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[120px] min-w-[120px] max-w-[120px]">Handle</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[300px] min-w-[300px] max-w-[300px]">关键词</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[300px] min-w-[300px] max-w-[300px]">SEO 标题</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[250px] min-w-[250px] max-w-[250px]">SEO 描述</th>
+                        <th className="px-3 py-4 text-xs font-bold text-slate-400 uppercase whitespace-nowrap w-[150px] min-w-[150px] max-w-[150px]">URL</th>
                       </>
                     )}
                     <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right whitespace-nowrap w-[140px]">操作</th>
@@ -3101,7 +4518,11 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {items.map((item: any) => (
-                    <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors ${selectedItems.includes(item.id) ? 'bg-blue-50/30' : ''}`}>
+                    <tr key={item.id} className={`transition-colors border-l-4 ${
+                      item.seoOptimized 
+                        ? 'bg-emerald-50/5 hover:bg-emerald-50/15 border-l-emerald-500' 
+                        : 'border-l-transparent hover:bg-slate-50/50'
+                    } ${selectedItems.includes(item.id) ? 'bg-blue-50/30' : ''}`}>
                       <td className="px-6 py-4">
                         <input 
                           type="checkbox" 
@@ -3116,39 +4537,61 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           }}
                         />
                       </td>
-                      <td className="px-6 py-4 min-w-[220px]">
-                        {isImageTab ? (
-                          <div className="flex items-center gap-3">
-                            <div 
-                              className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 cursor-zoom-in group relative"
-                              onClick={() => setPreviewImage({ url: item.url, name: item.name })}
-                            >
-                              <img src={item.url} alt={item.altText} className="w-full h-full object-cover group-hover:scale-110 transition-transform" referrerPolicy="no-referrer" />
-                              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <ICONS.Search className="w-4 h-4 text-white" />
-                              </div>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <a 
-                                href={item.pageUrl || item.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-medium text-slate-600 truncate max-w-[150px] hover:text-blue-600 hover:underline transition-all" 
-                                title={item.name}
-                              >
-                                {item.name}
-                              </a>
-                              {item.altText && (item.size || 0) <= 500 * 1024 ? (
-                                <span className="w-fit px-1.5 py-0.5 bg-green-50 text-green-600 rounded text-[10px] font-bold border border-green-100">已优化</span>
-                              ) : (
-                                <span className="w-fit px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-bold border border-amber-100">未优化</span>
-                              )}
+                      <td className="px-2 py-4">
+                        {(() => {
+                           let priority = 1;
+                           if (item.seoOptimized) {
+                             priority = 1;
+                           } else if (isImageTab) {
+                             if (!item.altText) priority += 5;
+                             if ((item.size || 0) > 500 * 1024) priority += 3;
+                             if (isImageNameMeaningless(item.name)) priority += 2;
+                           } else {
+                             if (!item.seoTitle) priority += 3;
+                             else if (item.seoTitle.length < 30) priority += 1;
+                             if (!item.seoDescription) priority += 3;
+                             else if (item.seoDescription.length < 50) priority += 1;
+                             if (!item.keywords || item.keywords.length === 0) priority += 2;
+                           }
+                           priority = Math.min(10, priority);
+                           
+                           const colors = [
+                             'bg-slate-100 text-slate-500', // 1
+                             'bg-slate-100 text-slate-500', // 2
+                             'bg-blue-50 text-blue-500',    // 3
+                             'bg-blue-50 text-blue-500',    // 4
+                             'bg-amber-50 text-amber-500',  // 5
+                             'bg-amber-50 text-amber-500',  // 6
+                             'bg-orange-50 text-orange-500',// 7
+                             'bg-orange-50 text-orange-500',// 8
+                             'bg-red-50 text-red-500',     // 9
+                             'bg-red-600 text-white',      // 10
+                           ];
+
+                           return (
+                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shadow-sm ${colors[priority - 1]}`} title={`优化优先级: ${priority}/10`}>
+                               {priority}
+                             </div>
+                           );
+                        })()}
+                      </td>
+                      {isImageTab ? (
+                        <td className="px-6 py-4 w-[100px] min-w-[100px] max-w-[100px]">
+                          <div 
+                            className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 cursor-zoom-in group relative"
+                            onClick={() => setPreviewImage({ url: item.url, name: item.name })}
+                          >
+                            <img src={item.url} alt={item.altText} className="w-full h-full object-cover group-hover:scale-110 transition-transform" referrerPolicy="no-referrer" />
+                            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <ICONS.Search className="w-4 h-4 text-white" />
                             </div>
                           </div>
-                        ) : (
+                        </td>
+                      ) : (
+                        <td className="px-6 py-4 w-[300px] min-w-[300px] max-w-[300px]">
                           <div className="flex flex-col gap-1">
                             <a 
-                              href={item.seoUrl || (aiTab === 'products' ? `/products/${item.id}` : aiTab === 'collections' ? `/collections/${item.id}` : aiTab === 'blogs' ? `/blogs/${item.id}` : aiTab === 'blogSets' ? `/blog-sets/${item.id}` : `/pages/${item.id}`)}
+                              href={getItemPageUrl(item)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="font-bold text-slate-900 line-clamp-2 hover:text-blue-600 hover:underline transition-all" 
@@ -3156,19 +4599,47 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             >
                               {item.title || item.name}
                             </a>
-                            {(item.seoTitle && item.seoTitle.length >= 30 && item.seoDescription && item.seoDescription.length >= 50 && item.keywords && item.keywords.length > 0) ? (
-                              <span className="w-fit px-1.5 py-0.5 bg-green-50 text-green-600 rounded text-[10px] font-bold border border-green-100">已优化</span>
+                            {item.seoOptimized ? (
+                              <span className="w-fit px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold border border-emerald-100 flex items-center gap-0.5">
+                                <ICONS.Check className="w-2.5 h-2.5" />
+                                已优化
+                              </span>
+                            ) : (item.seoTitle && item.seoTitle.length >= 30 && item.seoDescription && item.seoDescription.length >= 50 && item.keywords && item.keywords.length > 0) ? (
+                              null
                             ) : (
-                              <span className="w-fit px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-bold border border-amber-100">未优化</span>
+                              <span className="w-fit px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[11px] font-bold border border-amber-100">未优化</span>
                             )}
                           </div>
-                        )}
-                      </td>
+                        </td>
+                      )}
                       {isImageTab ? (
                         <>
+                          <td className="px-6 py-4 w-[240px] min-w-[240px] max-w-[240px]">
+                            <div className="flex flex-col gap-1">
+                              <a 
+                                href={item.pageUrl || item.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-semibold text-slate-700 truncate max-w-[220px] hover:text-blue-600 hover:underline transition-all block" 
+                                title={item.name}
+                              >
+                                {item.name}
+                              </a>
+                              {item.seoOptimized ? (
+                                <span className="w-fit px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold border border-emerald-100 flex items-center gap-0.5">
+                                  <ICONS.Check className="w-2.5 h-2.5" />
+                                  已优化
+                                </span>
+                              ) : (!item.altText || (item.size || 0) > 500 * 1024 || isImageNameMeaningless(item.name)) ? (
+                                <span className="w-fit px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[11px] font-bold border border-amber-100 block">
+                                  {isImageNameMeaningless(item.name) ? '名称无意义' : '待优化'}
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="px-6 py-4">
                             <div className="flex flex-col gap-1">
-                              <span className="text-[10px] text-slate-400 uppercase font-bold">{item.parentType === 'product' ? '商品' : item.parentType === 'collection' ? '集合' : '博客'}</span>
+                              <span className="text-[11px] text-slate-400 uppercase font-bold">{item.parentType === 'product' ? '商品' : item.parentType === 'collection' ? '集合' : '博客'}</span>
                               <a 
                                 href={item.pageUrl} 
                                 target="_blank" 
@@ -3193,139 +4664,378 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             </div>
                           </td>
                           <td className="px-6 py-4 min-w-[250px]">
-                            <div className="text-xs text-slate-600 bg-slate-50/50 p-2 rounded-xl border border-slate-100 line-clamp-2 min-h-[36px] flex items-center" title={item.altText || '无 Alt 文本'}>
-                              {item.altText || <span className="text-slate-300 italic">无 Alt 文本</span>}
+                            <div className={`text-xs p-2 rounded-xl border line-clamp-2 min-h-[36px] flex items-center ${!item.altText ? 'bg-rose-50/70 border-rose-100 text-rose-700 font-medium' : 'text-slate-600 bg-slate-50/50 border-slate-100'}`} title={item.altText || '无 Alt 文本'}>
+                              {item.altText || (
+                                <span className="flex items-center gap-1.5 font-bold text-rose-600">
+                                  <ICONS.AlertTriangle className="w-3.5 h-3.5" />
+                                  无 Alt 文本
+                                </span>
+                              )}
                             </div>
                           </td>
                         </>
                       ) : (
                         <>
-                          <td className="px-6 py-4 min-w-[220px]">
-                            <div className="flex flex-wrap gap-1 mb-2">
-                              {(item.keywords || []).map((kw: string, idx: number) => {
-                                const isPrimary = item.primaryKeyword === kw || (!item.primaryKeyword && idx === 0);
-                                return (
-                                  <span 
-                                    key={idx} 
-                                    title={kw} 
-                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium group transition-all cursor-pointer ${
-                                      isPrimary 
-                                        ? 'bg-blue-600 text-white shadow-sm' 
-                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                    }`}
-                                    onClick={() => handleSetPrimaryKeyword(aiTab.slice(0, -1) as any, item, isPrimary ? '' : kw)}
+                          <td className="px-6 py-4 w-[300px] min-w-[300px] max-w-[300px]">
+                            {inlineEditing?.id === item.id && inlineEditing?.field === 'keywords' ? (
+                              <div className="flex flex-col gap-2">
+                                <textarea 
+                                  value={inlineEditing.value}
+                                  onChange={(e) => setInlineEditing({ ...inlineEditing, value: e.target.value })}
+                                  className="w-full p-2 text-xs border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none min-h-[60px]"
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setInlineEditing(null)} className="px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                                  <button onClick={handleInlineSave} className="px-2 py-1 text-[11px] bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap gap-1 mb-2">
+                                  {(item.keywords || []).map((kw: string, idx: number) => {
+                                    const isPrimary = item.primaryKeyword === kw || (!item.primaryKeyword && idx === 0);
+                                    return (
+                                      <span 
+                                        key={idx} 
+                                        title={kw} 
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium group transition-all cursor-pointer ${
+                                          isPrimary 
+                                            ? 'bg-blue-600 text-white shadow-sm' 
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        }`}
+                                        onClick={() => handleSetPrimaryKeyword(aiTab.slice(0, -1) as any, item, isPrimary ? '' : kw)}
+                                      >
+                                        {isPrimary && <ICONS.Star className="w-2.5 h-2.5 fill-current" />}
+                                        {kw}
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleUpdateKeywords(aiTab.slice(0, -1) as any, item, item.keywords.filter((_: any, i: number) => i !== idx));
+                                          }}
+                                          className={`transition-all ${isPrimary ? 'text-white/70 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:text-red-500'}`}
+                                        >
+                                          <ICONS.XCircle className="w-2.5 h-2.5" />
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+
+                                <div className="flex gap-1 mb-2">
+                                  <input 
+                                    type="text"
+                                    placeholder="添加关键词..."
+                                    className="text-[11px] p-1 border border-slate-200 rounded outline-none focus:border-blue-500 w-24"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        const val = (e.target as HTMLInputElement).value.trim();
+                                        if (val) {
+                                          const newKws = val.split(/[、,，]+/).filter(k => k.trim());
+                                          handleUpdateKeywords(aiTab.slice(0, -1) as any, item, [...(item.keywords || []), ...newKws]);
+                                          (e.target as HTMLInputElement).value = '';
+                                        }
+                                      }
+                                    }}
+                                  />
+                                  <button 
+                                    onClick={() => handleGenerateKeywords(aiTab.slice(0, -1) as any, item)}
+                                    disabled={isGeneratingKeywords === item.id}
+                                    className="p-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 disabled:opacity-50"
+                                    title="AI 生成关键词"
                                   >
-                                    {isPrimary && <ICONS.Star className="w-2.5 h-2.5 fill-current" />}
-                                    {kw}
-                                    <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleUpdateKeywords(aiTab.slice(0, -1) as any, item, item.keywords.filter((_: any, i: number) => i !== idx));
-                                      }}
-                                      className={`transition-all ${isPrimary ? 'text-white/70 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:text-red-500'}`}
-                                    >
-                                      <ICONS.XCircle className="w-2.5 h-2.5" />
-                                    </button>
-                                  </span>
-                                );
-                              })}
-                            </div>
-                            <div className="flex gap-1">
-                              <input 
-                                type="text"
-                                placeholder="添加关键词..."
-                                className="text-[10px] p-1 border border-slate-200 rounded outline-none focus:border-blue-500 w-24"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    const val = (e.target as HTMLInputElement).value.trim();
-                                    if (val) {
-                                      const newKws = val.split(/[、,，]+/).filter(k => k.trim());
-                                      handleUpdateKeywords(aiTab.slice(0, -1) as any, item, [...(item.keywords || []), ...newKws]);
-                                      (e.target as HTMLInputElement).value = '';
-                                    }
-                                  }
-                                }}
-                              />
-                              <button 
-                                onClick={() => handleGenerateKeywords(aiTab.slice(0, -1) as any, item)}
-                                disabled={isGeneratingKeywords === item.id}
-                                className="p-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 disabled:opacity-50"
-                                title="AI 生成关键词"
-                              >
-                                {isGeneratingKeywords === item.id ? (
-                                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                                    <ICONS.RefreshCw className="w-3 h-3" />
-                                  </motion.div>
-                                ) : (
-                                  <ICONS.Zap className="w-3 h-3" />
+                                    {isGeneratingKeywords === item.id ? (
+                                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                                        <ICONS.RefreshCw className="w-3 h-3" />
+                                      </motion.div>
+                                    ) : (
+                                      <ICONS.Zap className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                </div>
+                                
+                                {/* AI Suggestion for Keywords */}
+                                {itemSuggestions[item.id]?.keywords && itemSuggestions[item.id].keywords.some((kw: string) => !(item.keywords || []).includes(kw)) && (
+                                  <div className="p-2 bg-indigo-50/50 rounded-lg border border-indigo-100/50">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[11px] font-bold text-indigo-500 uppercase flex items-center gap-1">
+                                        <ICONS.Zap className="w-2 h-2" />
+                                        AI 建议关键词
+                                      </span>
+                                      <button 
+                                        onClick={() => handleApplySuggestion(item, 'keywords', itemSuggestions[item.id].keywords)}
+                                        className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 hover:underline"
+                                      >
+                                        采纳
+                                      </button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {itemSuggestions[item.id].keywords.map((kw: string, idx: number) => {
+                                        const isAdded = (item.keywords || []).includes(kw);
+                                        return (
+                                          <span 
+                                            key={idx} 
+                                            onClick={() => {
+                                              if (!isAdded) {
+                                                handleUpdateKeywords(aiTab.slice(0, -1) as any, item, [...(item.keywords || []), kw]);
+                                              }
+                                            }}
+                                            className={`px-1 py-0.5 bg-white text-[11px] rounded border border-slate-100 transition-all ${
+                                              isAdded 
+                                                ? 'text-slate-300 bg-slate-50 border-slate-50 cursor-not-allowed' 
+                                                : 'text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 cursor-pointer'
+                                            }`}
+                                            title={isAdded ? '已添加' : '点击添加'}
+                                          >
+                                            {kw}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
                                 )}
-                              </button>
-                            </div>
+                              </>
+                            )}
                           </td>
-                          <td className="px-6 py-4 w-[200px] min-w-[200px] max-w-[200px]">
-                            <div className="flex items-start justify-between group/cell">
-                              <div 
-                                className="text-xs text-slate-600 line-clamp-2" 
-                                title={item.seoTitle || ''}
-                              >
-                                {item.seoTitle || <span className="text-slate-300 italic">未设置</span>}
+                          <td className="px-6 py-4 w-[300px] min-w-[300px] max-w-[300px]">
+                            {inlineEditing?.id === item.id && inlineEditing?.field === 'seoTitle' ? (
+                              <div className="flex flex-col gap-2">
+                                <textarea 
+                                  value={inlineEditing.value}
+                                  onChange={(e) => setInlineEditing({ ...inlineEditing, value: e.target.value })}
+                                  className="w-full p-2 text-xs border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none min-h-[60px]"
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setInlineEditing(null)} className="px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                                  <button onClick={handleInlineSave} className="px-2 py-1 text-[11px] bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                                </div>
                               </div>
-                              <button 
-                                onClick={() => {
-                                  setEditingItem(item);
-                                  setIsEditModalOpen(true);
-                                }}
-                                className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all ml-2"
-                              >
-                                <ICONS.Edit className="w-3 h-3" />
-                              </button>
-                            </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start justify-between group/cell">
+                                  <div 
+                                    className="text-xs text-slate-600" 
+                                    title={item.seoTitle || ''}
+                                  >
+                                    {item.seoTitle ? (
+                                      item.seoTitle
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-600 border border-rose-200/60 shadow-xs whitespace-nowrap">
+                                        <span className="w-1 h-1 rounded-full bg-rose-500 animate-pulse" />
+                                        待填写
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button 
+                                    onClick={() => setInlineEditing({ id: item.id, field: 'seoTitle', value: item.seoTitle || '' })}
+                                    className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all ml-2"
+                                    title="快速编辑"
+                                  >
+                                    <ICONS.Edit className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                {/* AI Suggestion for Title */}
+                                {itemSuggestions[item.id]?.seoTitle && itemSuggestions[item.id].seoTitle !== item.seoTitle && (
+                                  <div className="mt-2 p-2 bg-indigo-50/50 rounded-lg border border-indigo-100/50 group/sugg relative">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[11px] font-bold text-indigo-500 uppercase flex items-center gap-1">
+                                        <ICONS.Zap className="w-2 h-2" />
+                                        AI 建议
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        {itemSuggestions[item.id]?.reasons?.seoTitle && (
+                                          <div className="group/reason relative">
+                                            <span className="text-[11px] text-indigo-400 cursor-help flex items-center gap-0.5">
+                                              <ICONS.Info className="w-2.5 h-2.5" />
+                                              原因
+                                            </span>
+                                            <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-slate-800 text-white text-[11px] rounded-lg opacity-0 group-hover/reason:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
+                                              {itemSuggestions[item.id].reasons.seoTitle}
+                                              <div className="absolute top-full right-4 border-4 border-transparent border-t-slate-800" />
+                                            </div>
+                                          </div>
+                                        )}
+                                        <button 
+                                          onClick={() => handleApplySuggestion(item, 'seoTitle', itemSuggestions[item.id].seoTitle)}
+                                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 hover:underline"
+                                        >
+                                          采纳
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-slate-500 leading-relaxed italic">
+                                      {itemSuggestions[item.id].seoTitle}
+                                    </p>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
-                          <td className="px-6 py-4 w-[200px] min-w-[200px] max-w-[200px]">
-                            <div className="flex items-start justify-between group/cell">
-                              <div 
-                                className="text-xs text-slate-600 line-clamp-3" 
-                                title={item.seoDescription || ''}
-                              >
-                                {item.seoDescription || <span className="text-slate-300 italic">未设置</span>}
+                          <td className="px-6 py-4 w-[250px] min-w-[250px] max-w-[250px]">
+                            {inlineEditing?.id === item.id && inlineEditing?.field === 'seoDescription' ? (
+                              <div className="flex flex-col gap-2">
+                                <textarea 
+                                  value={inlineEditing.value}
+                                  onChange={(e) => setInlineEditing({ ...inlineEditing, value: e.target.value })}
+                                  className="w-full p-2 text-xs border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none min-h-[80px]"
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setInlineEditing(null)} className="px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                                  <button onClick={handleInlineSave} className="px-2 py-1 text-[11px] bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                                </div>
                               </div>
-                              <button 
-                                onClick={() => {
-                                  setEditingItem(item);
-                                  setIsEditModalOpen(true);
-                                }}
-                                className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all ml-2"
-                              >
-                                <ICONS.Edit className="w-3 h-3" />
-                              </button>
-                            </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start justify-between group/cell">
+                                  <div 
+                                    className="text-xs text-slate-600" 
+                                    title={item.seoDescription || ''}
+                                  >
+                                    {item.seoDescription ? (
+                                      item.seoDescription
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200/60 shadow-xs whitespace-nowrap">
+                                        <span className="w-1 h-1 rounded-full bg-amber-500 animate-pulse" />
+                                        待填写
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button 
+                                    onClick={() => setInlineEditing({ id: item.id, field: 'seoDescription', value: item.seoDescription || '' })}
+                                    className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all ml-2"
+                                    title="快速编辑"
+                                  >
+                                    <ICONS.Edit className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                {/* AI Suggestion for Description */}
+                                {itemSuggestions[item.id]?.seoDescription && itemSuggestions[item.id].seoDescription !== item.seoDescription && (
+                                  <div className="mt-2 p-2 bg-indigo-50/50 rounded-lg border border-indigo-100/50 group/sugg relative">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[11px] font-bold text-indigo-500 uppercase flex items-center gap-1">
+                                        <ICONS.Zap className="w-2 h-2" />
+                                        AI 建议
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        {itemSuggestions[item.id]?.reasons?.seoDescription && (
+                                          <div className="group/reason relative">
+                                            <span className="text-[11px] text-indigo-400 cursor-help flex items-center gap-0.5">
+                                              <ICONS.Info className="w-2.5 h-2.5" />
+                                              原因
+                                            </span>
+                                            <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-slate-800 text-white text-[11px] rounded-lg opacity-0 group-hover/reason:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
+                                              {itemSuggestions[item.id].reasons.seoDescription}
+                                              <div className="absolute top-full right-4 border-4 border-transparent border-t-slate-800" />
+                                            </div>
+                                          </div>
+                                        )}
+                                        <button 
+                                          onClick={() => handleApplySuggestion(item, 'seoDescription', itemSuggestions[item.id].seoDescription)}
+                                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 hover:underline"
+                                        >
+                                          采纳
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-slate-500 leading-relaxed italic">
+                                      {itemSuggestions[item.id].seoDescription}
+                                    </p>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
-                          <td className="px-3 py-4 w-[120px] min-w-[120px] max-w-[120px]">
-                            <div className="text-xs text-slate-400 font-mono line-clamp-3 break-all" title={item.seoUrl || item.handle || '/'}>
-                              {item.seoUrl || item.handle || '/'}
-                            </div>
+                          <td className="px-3 py-4 w-[150px] min-w-[150px] max-w-[150px]">
+                            {inlineEditing?.id === item.id && inlineEditing?.field === 'seoUrl' ? (
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[11px] text-slate-400 font-bold uppercase">
+                                  编辑 URL Slug
+                                </label>
+                                <input 
+                                  type="text"
+                                  value={inlineEditing.value}
+                                  onChange={(e) => setInlineEditing({ ...inlineEditing, value: e.target.value })}
+                                  className="w-full p-2 text-xs border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                  placeholder="url-slug"
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setInlineEditing(null)} className="px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 rounded">取消</button>
+                                  <button onClick={handleInlineSave} className="px-2 py-1 text-[11px] bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start justify-between group/cell">
+                                  <div className="text-xs text-slate-400 font-mono line-clamp-3 break-all" title={item.seoUrl || item.handle || '/'}>
+                                    {(!item.seoUrl && !item.handle) ? (
+                                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200/60 shadow-xs whitespace-nowrap">
+                                        <span className="w-1 h-1 rounded-full bg-purple-500 animate-pulse" />
+                                        待设置
+                                      </span>
+                                    ) : (
+                                      item.seoUrl || item.handle || '/'
+                                    )}
+                                  </div>
+                                  <button 
+                                    onClick={() => setInlineEditing({ id: item.id, field: 'seoUrl', value: item.seoUrl || item.handle || '' })}
+                                    className="opacity-0 group-hover/cell:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all ml-2"
+                                    title="快速编辑"
+                                  >
+                                    <ICONS.Edit className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                {/* AI Suggestion for Handle */}
+                                {itemSuggestions[item.id]?.seoUrl && itemSuggestions[item.id].seoUrl !== (item.seoUrl || item.handle) && (
+                                  <div className="mt-2 p-2 bg-indigo-50/50 rounded-lg border border-indigo-100/50 group/sugg relative">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[11px] font-bold text-indigo-500 uppercase flex items-center gap-1">
+                                        <ICONS.Zap className="w-2 h-2" />
+                                        AI 建议
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        {itemSuggestions[item.id]?.reasons?.seoUrl && (
+                                          <div className="group/reason relative">
+                                            <span className="text-[11px] text-indigo-400 cursor-help flex items-center gap-0.5">
+                                              <ICONS.Info className="w-2.5 h-2.5" />
+                                              原因
+                                            </span>
+                                            <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-slate-800 text-white text-[11px] rounded-lg opacity-0 group-hover/reason:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
+                                              {itemSuggestions[item.id].reasons.seoUrl}
+                                              <div className="absolute top-full right-4 border-4 border-transparent border-t-slate-800" />
+                                            </div>
+                                          </div>
+                                        )}
+                                        <button 
+                                          onClick={() => handleApplySuggestion(item, 'seoUrl', itemSuggestions[item.id].seoUrl)}
+                                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 hover:underline"
+                                        >
+                                          采纳
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-slate-500 font-mono break-all italic">
+                                      {itemSuggestions[item.id].seoUrl}
+                                    </p>
+                                  </div>
+                                )}
+
+
+                              </>
+                            )}
                           </td>
                         </>
                       )}
                       <td className="px-6 py-4 w-[140px] text-right whitespace-nowrap">
                         <div className="flex flex-col items-end gap-2">
                           <button 
-                            onClick={() => {
-                              setEditingItem(item);
-                              setIsEditModalOpen(true);
-                            }}
-                            className="w-full px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-bold hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-1.5"
+                            onClick={() => aiTab === 'images' ? handleOptimizeItem(item, 'image') : handleGenerateSuggestions(item, aiTab.slice(0, -1) as any)}
+                            disabled={isOptimizingItem === item.id || isGeneratingSuggestions === item.id}
+                            className="w-full px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[11px] font-bold hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
                           >
-                            <ICONS.Edit className="w-3 h-3" />
-                            编辑
-                          </button>
-                          <button 
-                            onClick={() => handleOptimizeItem(item, isImageTab ? 'image' : aiTab.slice(0, -1) as any)}
-                            disabled={isOptimizingItem === item.id}
-                            className="w-full px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                            title="AI 优化"
-                          >
-                            {isOptimizingItem === item.id ? (
+                            {isOptimizingItem === item.id || isGeneratingSuggestions === item.id ? (
                               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
                                 <ICONS.RefreshCw className="w-3 h-3" />
                               </motion.div>
@@ -3334,38 +5044,121 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             )}
                             AI 优化
                           </button>
-                          {!isImageTab && (
+
+                          {isImageTab && (
                             <button 
                               onClick={() => {
-                                setHistoryItemId(item.id);
-                                setShowHistory(true);
+                                setEditingItem(item);
+                                setIsEditModalOpen(true);
                               }}
-                              className="w-full px-3 py-1.5 bg-slate-50 text-slate-500 rounded-lg text-[10px] font-bold hover:bg-slate-100 transition-all flex items-center justify-center gap-1.5"
-                              title="查看历史"
+                              className="w-full px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-[11px] font-bold hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center gap-1.5"
                             >
-                              <ICONS.History className="w-3 h-3" />
-                              历史
+                              <ICONS.Edit className="w-3 h-3" />
+                              去处理
                             </button>
                           )}
-                          {isImageTab && (item.size || 0) > 200 * 1024 && (
-                            <button 
-                              onClick={() => handleCompressImage(item)}
-                              disabled={isCompressing === item.id}
-                              className="w-full px-2 py-1 text-blue-600 hover:bg-blue-50 rounded transition-all text-[10px] font-bold border border-blue-200"
-                              title="压缩图片"
+
+                          {!isImageTab && itemSuggestions[item.id] && (
+                            <div className="w-full space-y-1.5">
+                              <button
+                                onClick={() => {
+                                  if (confirmingApplyId === item.id) {
+                                    setConfirmingApplyId(null);
+                                  } else {
+                                    setConfirmingApplyId(item.id);
+                                  }
+                                }}
+                                className={`w-full px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm ${
+                                  confirmingApplyId === item.id
+                                    ? 'bg-slate-200 text-slate-700 border border-slate-300'
+                                    : 'bg-emerald-50 text-emerald-600 border border-emerald-200/40 hover:bg-emerald-600 hover:text-white'
+                                }`}
+                                title="一键采纳所有 AI 建议"
+                              >
+                                <ICONS.CheckCircle className="w-3 h-3" />
+                                批量采纳
+                              </button>
+                              
+                              {confirmingApplyId === item.id && (
+                                <motion.div 
+                                  initial={{ opacity: 0, height: 0, y: -4 }}
+                                  animate={{ opacity: 1, height: 'auto', y: 0 }}
+                                  exit={{ opacity: 0, height: 0, y: -4 }}
+                                  className="flex items-center gap-1 w-full overflow-hidden"
+                                >
+                                  <button
+                                    onClick={() => {
+                                      handleApplySuggestion(item, 'all', itemSuggestions[item.id]);
+                                      setConfirmingApplyId(null);
+                                    }}
+                                    className="flex-1 px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-[11px] font-black tracking-tight transition-all flex items-center justify-center gap-0.5 shadow-sm"
+                                  >
+                                    <ICONS.Check className="w-2.5 h-2.5" />
+                                    确认
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmingApplyId(null)}
+                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded text-[11px] font-bold transition-all"
+                                  >
+                                    取消
+                                  </button>
+                                </motion.div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* 已优化手动开关 */}
+                          <div className="w-full mt-1.5 select-none" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const isOptimized = !item.seoOptimized;
+                                try {
+                                  if (aiTab === 'images') {
+                                    const pType = item.parentType === 'product' ? 'products' : item.parentType === 'collection' ? 'collections' : 'blogs';
+                                    await updateDoc(doc(db, pType, item.parentId), {
+                                      seoOptimized: isOptimized,
+                                      updatedAt: new Date().toISOString()
+                                    });
+                                  } else {
+                                    await updateDoc(doc(db, aiTab, item.id), {
+                                      seoOptimized: isOptimized,
+                                      updatedAt: new Date().toISOString()
+                                    });
+                                  }
+                                  toast.success(isOptimized ? "已标记为已优化" : "已取消标记已优化");
+                                } catch (err) {
+                                  handleFirestoreError(err, OperationType.WRITE, `${aiTab}/${item.id}`);
+                                }
+                              }}
+                              className={`w-full py-1.5 px-2 rounded-lg text-[11px] font-bold border transition-all flex items-center justify-center gap-1 group/opt ${
+                                item.seoOptimized
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200'
+                                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-800'
+                              }`}
                             >
-                              {isCompressing === item.id ? (
-                                <div className="flex items-center justify-center gap-1">
-                                  <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                                    <ICONS.RefreshCw className="w-2.5 h-2.5" />
-                                  </motion.div>
-                                  压缩中
-                                </div>
+                              {item.seoOptimized ? (
+                                <>
+                                  <span className="flex items-center gap-1.5 group-hover/opt:hidden">
+                                    <ICONS.CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                    已标记优化
+                                  </span>
+                                  <span className="hidden group-hover/opt:flex items-center gap-1.5 text-rose-600">
+                                    <ICONS.XCircle className="w-3.5 h-3.5 text-rose-500" />
+                                    撤销已优化
+                                  </span>
+                                </>
                               ) : (
-                                "压缩图片"
+                                <>
+                                  <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="10" />
+                                  </svg>
+                                  手动标记优化
+                                </>
                               )}
                             </button>
-                          )}
+                          </div>
+
                         </div>
                       </td>
                     </tr>
@@ -3397,9 +5190,35 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                       <ICONS.Settings className="w-6 h-6" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black text-slate-900">提示词管理</h3>
-                      <p className="text-slate-500 text-xs">自定义 AI 生成内容时使用的提示词</p>
+                      <h3 className="text-xl font-black text-slate-900">基础设置</h3>
+                      <p className="text-slate-500 text-xs">配置 AI 模型、模式及自定义提示词</p>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
+                    <button 
+                      onClick={() => setActivePromptCategory('general')}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePromptCategory === 'general' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      模型与模式
+                    </button>
+                    <button 
+                      onClick={() => setActivePromptCategory('seo')}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePromptCategory === 'seo' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      通用 SEO
+                    </button>
+                    <button 
+                      onClick={() => setActivePromptCategory('content')}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePromptCategory === 'content' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      内容优化
+                    </button>
+                    <button 
+                      onClick={() => setActivePromptCategory('blog')}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activePromptCategory === 'blog' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      博客管理
+                    </button>
                   </div>
                   <button 
                     onClick={() => setIsPromptModalOpen(false)}
@@ -3410,255 +5229,362 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
-                  {/* SEO Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Zap className="w-4 h-4" />
+                  {activePromptCategory === 'general' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                            <ICONS.Zap className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900">模型选择</h4>
+                            <p className="text-[11px] text-slate-400">选择用于生成内容的 AI 模型</p>
+                          </div>
                         </div>
-                        <h4 className="font-bold text-slate-900">SEO 优化提示词</h4>
+                        <div className="grid grid-cols-1 gap-3">
+                          {[
+                            { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: '速度极快，适合日常优化', icon: '⚡' },
+                            { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: '最强推理，适合复杂内容', icon: '🧠' }
+                          ].map(model => (
+                            <button
+                              key={model.id}
+                              onClick={() => setSelectedModel(model.id)}
+                              className={`p-4 rounded-2xl border-2 text-left transition-all ${selectedModel === model.id ? 'border-blue-600 bg-blue-50/50' : 'border-slate-100 hover:border-slate-200'}`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-bold text-sm text-slate-900">{model.icon} {model.name}</span>
+                                {selectedModel === model.id && <div className="w-2 h-2 bg-blue-600 rounded-full" />}
+                              </div>
+                              <p className="text-[11px] text-slate-500">{model.desc}</p>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('seo')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.seo}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, seo: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入 SEO 优化提示词..."
-                    />
-                  </div>
 
-                  {/* Strategy Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Analysis className="w-4 h-4" />
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+                            <ICONS.Analysis className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900">优化模式</h4>
+                            <p className="text-[11px] text-slate-400">控制 AI 生成内容的风格与倾向</p>
+                          </div>
                         </div>
-                        <h4 className="font-bold text-slate-900">SEO 策略生成提示词</h4>
+                        <div className="grid grid-cols-1 gap-3">
+                          {[
+                            { id: 'balanced', name: '平衡模式', desc: '兼顾 SEO 排名与用户阅读体验', icon: '🎯' },
+                            { id: 'seo_first', name: 'SEO 优先', desc: '侧重关键词堆叠与排名权重', icon: '📈' },
+                            { id: 'creative', name: '创意模式', desc: '更具吸引力的文案，提高点击率', icon: '✨' }
+                          ].map(mode => (
+                            <button
+                              key={mode.id}
+                              onClick={() => setSelectedMode(mode.id)}
+                              className={`p-4 rounded-2xl border-2 text-left transition-all ${selectedMode === mode.id ? 'border-amber-600 bg-amber-50/50' : 'border-slate-100 hover:border-slate-200'}`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-bold text-sm text-slate-900">{mode.icon} {mode.name}</span>
+                                {selectedMode === mode.id && <div className="w-2 h-2 bg-amber-600 rounded-full" />}
+                              </div>
+                              <p className="text-[11px] text-slate-500">{mode.desc}</p>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('strategy')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
                     </div>
-                    <textarea 
-                      value={editingPrompts.strategy}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, strategy: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入 SEO 策略生成提示词..."
-                    />
-                  </div>
+                  )}
 
-                  {/* Blog Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center">
-                          <ICONS.FileText className="w-4 h-4" />
+                  {activePromptCategory === 'seo' && (
+                    <>
+                      {/* Strategy Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Analysis className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">SEO 策略生成提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于“SEO 诊断”功能，生成整体 SEO 优化策略</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('strategy')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">博客生成提示词</h4>
+                        <textarea 
+                          value={editingPrompts.strategy}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, strategy: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入 SEO 策略生成提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('blog')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.blog}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, blog: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入博客生成提示词..."
-                    />
-                  </div>
 
-                  {/* Image Alt Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Image className="w-4 h-4" />
+                      {/* SEO Audit Suggestion Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-cyan-50 text-cyan-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Search className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">SEO 优化建议提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于“SEO 诊断”功能，为每个具体项目生成优化建议</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('seoAudit')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">图片 Alt 生成提示词</h4>
+                        <textarea 
+                          value={editingPrompts.seoAudit}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, seoAudit: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入 SEO 优化建议提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('imageAlt')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.imageAlt}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, imageAlt: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入图片 Alt 生成提示词..."
-                    />
-                  </div>
 
-                  {/* Keywords Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Tag className="w-4 h-4" />
+                      {/* Keywords Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Tag className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">关键词生成提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于编辑弹窗中的“AI 生成关键词”功能</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('keywords')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">关键词生成提示词</h4>
+                        <textarea 
+                          value={editingPrompts.keywords}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, keywords: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入关键词生成提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('keywords')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.keywords}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, keywords: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入关键词生成提示词..."
-                    />
-                  </div>
+                    </>
+                  )}
 
-                  {/* Blog Topics Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Lightbulb className="w-4 h-4" />
+                  {activePromptCategory === 'content' && (
+                    <>
+                      {/* SEO Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Zap className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">SEO 优化提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于核心 AI 优化功能（生成标题、描述、URL 等）</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('seo')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">博客选题提示词</h4>
+                        <textarea 
+                          value={editingPrompts.seo}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, seo: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入 SEO 优化提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('blogTopics')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.blogTopics}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, blogTopics: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入博客选题提示词..."
-                    />
-                  </div>
 
-                  {/* Manual Blog Topics Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-pink-50 text-pink-600 rounded-xl flex items-center justify-center">
-                          <ICONS.FileText className="w-4 h-4" />
+                      {/* Field Title Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Type className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">SEO 标题优化提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于编辑弹窗中 SEO 标题字段旁的“AI 优化”按钮</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('fieldTitle')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">手动选题生成提示词</h4>
+                        <textarea 
+                          value={editingPrompts.fieldTitle}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, fieldTitle: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入 SEO 标题优化提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('blogTopicsManual')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.blogTopicsManual}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, blogTopicsManual: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入手动选题生成提示词..."
-                    />
-                  </div>
 
-                  {/* SEO Audit Suggestion Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-cyan-50 text-cyan-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Search className="w-4 h-4" />
+                      {/* Field Description Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                              <ICONS.FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">SEO 描述优化提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于编辑弹窗中 SEO 描述字段旁的“AI 优化”按钮</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('fieldDescription')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">SEO 优化建议提示词</h4>
+                        <textarea 
+                          value={editingPrompts.fieldDescription}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, fieldDescription: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入 SEO 描述优化提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('seoAudit')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.seoAudit}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, seoAudit: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入 SEO 优化建议提示词..."
-                    />
-                  </div>
 
-                  {/* Field Title Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center">
-                          <ICONS.Type className="w-4 h-4" />
+                      {/* Image Alt Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Image className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">图片 Alt 生成提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于编辑弹窗中图片部分的“AI 生成 Alt”功能</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('imageAlt')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">SEO 标题优化提示词</h4>
+                        <textarea 
+                          value={editingPrompts.imageAlt}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, imageAlt: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入图片 Alt 生成提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('fieldTitle')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.fieldTitle}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, fieldTitle: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入 SEO 标题优化提示词..."
-                    />
-                  </div>
+                    </>
+                  )}
 
-                  {/* Field Description Prompt */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
-                          <ICONS.FileText className="w-4 h-4" />
+                  {activePromptCategory === 'blog' && (
+                    <>
+                      {/* Blog Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center">
+                              <ICONS.FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">博客生成提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于“博客管理”功能，根据选题生成完整的博客文章内容</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('blog')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
                         </div>
-                        <h4 className="font-bold text-slate-900">SEO 描述优化提示词</h4>
+                        <textarea 
+                          value={editingPrompts.blog}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, blog: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入博客生成提示词..."
+                        />
                       </div>
-                      <button 
-                        onClick={() => handleResetPrompts('fieldDescription')}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        <ICONS.RefreshCw className="w-3 h-3" />
-                        恢复默认
-                      </button>
-                    </div>
-                    <textarea 
-                      value={editingPrompts.fieldDescription}
-                      onChange={(e) => setEditingPrompts(prev => ({ ...prev, fieldDescription: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
-                      placeholder="输入 SEO 描述优化提示词..."
-                    />
-                  </div>
+
+                      {/* Blog Topics Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                              <ICONS.Lightbulb className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">博客选题提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于“博客管理”功能，基于店铺数据自动生成博客选题</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('blogTopics')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
+                        </div>
+                        <textarea 
+                          value={editingPrompts.blogTopics}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, blogTopics: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入博客选题提示词..."
+                        />
+                      </div>
+
+                      {/* Manual Blog Topics Prompt */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-pink-50 text-pink-600 rounded-xl flex items-center justify-center">
+                              <ICONS.FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900">手动选题生成提示词</h4>
+                              <p className="text-[11px] text-slate-400">用于“博客管理”功能，基于手动输入的关键词生成博客选题</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => handleResetPrompts('blogTopicsManual')}
+                            className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                          >
+                            <ICONS.RefreshCw className="w-3 h-3" />
+                            恢复默认
+                          </button>
+                        </div>
+                        <textarea 
+                          value={editingPrompts.blogTopicsManual}
+                          onChange={(e) => setEditingPrompts(prev => ({ ...prev, blogTopicsManual: e.target.value }))}
+                          className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none resize-none"
+                          placeholder="输入手动选题生成提示词..."
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="p-8 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">
@@ -3684,38 +5610,33 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-4">
-              {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'list' && filterIds && (
-                <>
-                  <button 
-                    onClick={() => {
-                      setFilterIds(null);
-                      setActiveTab('audit');
-                      onTabChange?.('SEO检测');
-                    }}
-                    className="px-3 py-1.5 bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-slate-900 transition-all shadow-sm whitespace-nowrap"
-                  >
-                    <ICONS.ChevronDown className="w-3 h-3 rotate-90" />
-                    <span>返回检测结果</span>
-                  </button>
-                  <button 
-                    onClick={() => setFilterIds(null)}
-                    className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-100 transition-all shadow-sm whitespace-nowrap"
-                  >
-                    <span>已过滤: {filterIds.length} 个项目</span>
-                    <ICONS.X className="w-3 h-3" />
-                  </button>
-                </>
-              )}
               <h1 className="text-2xl font-bold text-slate-900">
-                {activeTab === 'audit' ? 'SEO检测' : activeTab === 'ai' ? (aiMode === 'chat' ? 'SEO策略' : 'SEO管理') : activeTab === 'fix' ? 'SEO处理' : '效果分析'}
+                {activeTab === 'audit' ? 'SEO检测' : activeTab === 'ai' ? (aiMode === 'chat' ? 'SEO策略' : 'SEO管理') : activeTab === 'fix' ? 'SEO处理' : activeTab === 'blog' ? '博客管理' : '效果分析'}
               </h1>
             </div>
             <p className="text-sm text-slate-500">
-              {activeTab === 'audit' ? '全方位的 SEO 诊断与优化建议。' : activeTab === 'ai' ? (aiMode === 'chat' ? 'AI 驱动的 SEO 全局优化。' : '批量管理与优化您的站点内容。') : activeTab === 'fix' ? '针对检测出的问题进行针对性优化。' : '实时监控您的搜索排名与流量表现。'}
+              {activeTab === 'audit' ? '全方位的 SEO 诊断与优化建议。' : activeTab === 'ai' ? (aiMode === 'chat' ? 'AI 驱动的 SEO 全局优化。' : '批量管理与优化您的站点内容。') : activeTab === 'fix' ? '针对检测出的问题进行针对性优化。' : activeTab === 'blog' ? 'AI 驱动的自动化博客营销与内容生成。' : '实时监控您的搜索排名与流量表现。'}
             </p>
           </div>
 
           <div className="flex items-center gap-3">
+            {activeTab === 'blog' && blogEditActions && (
+              <div className="flex items-center gap-2.5">
+                <button 
+                  onClick={blogEditActions.cancel}
+                  className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={blogEditActions.publish}
+                  className="px-5 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ICONS.Check className="w-4 h-4" />
+                  <span>保存</span>
+                </button>
+              </div>
+            )}
             {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'chat' && (
               <button 
                 onClick={() => {
@@ -3725,27 +5646,26 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                 className="px-5 py-2.5 bg-white text-blue-600 rounded-2xl font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-50 transition-all shadow-sm whitespace-nowrap"
               >
                 <ICONS.Settings className="w-4 h-4" />
-                <span>提示词管理</span>
+                <span>基础设置</span>
               </button>
             )}
-            {(activeTab === 'ai' || activeTab === 'fix') && aiMode === 'list' && (
-              <button 
-                onClick={() => setIsImportModalOpen(true)}
-                className="px-5 py-2.5 bg-white text-blue-600 rounded-2xl font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-50 transition-all shadow-sm whitespace-nowrap"
-              >
-                <ICONS.Upload className="w-4 h-4" />
-                导入关键词
-              </button>
+            {activeTab === 'ai' && aiMode === 'list' && (
+              <>
+                <button 
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="px-5 py-2.5 bg-white text-blue-600 rounded-2xl font-bold border border-blue-100 flex items-center gap-2 hover:bg-blue-50 transition-all shadow-sm whitespace-nowrap cursor-pointer"
+                >
+                  <ICONS.Upload className="w-4 h-4" />
+                  导入关键词
+                </button>
+
+
+              </>
             )}
           </div>
         </div>
 
-          {(activeTab === 'ai' || activeTab === 'fix') && (
-            <div className="relative">
-              <div className="flex items-center gap-2">
-              </div>
-            </div>
-          )}
+          {/* Removed SEO策略 and SEO管理 toggle buttons as requested */}
 
           <AnimatePresence mode="wait">
         <motion.div
@@ -3811,7 +5731,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                                 {new Date(entry.updatedAt).toLocaleString()}
                               </span>
                               {isInitial && (
-                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 text-[8px] font-bold rounded uppercase">
+                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 text-[11px] font-bold rounded uppercase">
                                   初始状态
                                 </span>
                               )}
@@ -3827,22 +5747,22 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           <div className="grid grid-cols-2 gap-4">
                             {(entry.seoTitle !== undefined) && (
                               <div>
-                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">SEO 标题</div>
+                                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1">SEO 标题</div>
                                 <div className="text-xs text-slate-600 line-clamp-2">{entry.seoTitle || '(未设置)'}</div>
                               </div>
                             )}
                             {(entry.seoDescription !== undefined) && (
                               <div>
-                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">SEO 描述</div>
+                                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1">SEO 描述</div>
                                 <div className="text-xs text-slate-600 line-clamp-2">{entry.seoDescription || '(未设置)'}</div>
                               </div>
                             )}
                             {entry.keywords && entry.keywords.length > 0 && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">关键词</div>
+                                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1">关键词</div>
                                 <div className="flex flex-wrap gap-1">
                                   {entry.keywords.map((kw: string, i: number) => (
-                                    <span key={i} className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] text-slate-500">
+                                    <span key={i} className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[11px] text-slate-500">
                                       {kw}
                                     </span>
                                   ))}
@@ -3851,13 +5771,13 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             )}
                             {(entry.seoUrl !== undefined) && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">URL 别名</div>
+                                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1">URL 别名</div>
                                 <div className="text-xs text-slate-600">{entry.seoUrl || '(未设置)'}</div>
                               </div>
                             )}
                             {(entry.altText !== undefined) && (
                               <div className="col-span-2">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">ALT 文本</div>
+                                <div className="text-[11px] font-bold text-slate-400 uppercase mb-1">ALT 文本</div>
                                 <div className="text-xs text-slate-600">{entry.altText || '(未设置)'}</div>
                               </div>
                             )}
@@ -3883,7 +5803,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         <div className="text-xs font-bold text-slate-900 mb-1">关键词：</div>
                         <div className="flex flex-wrap gap-1">
                           {item.keywords.map((kw, i) => (
-                            <span key={i} className="px-2 py-0.5 bg-white border border-slate-200 rounded-md text-[10px] text-slate-600">
+                            <span key={i} className="px-2 py-0.5 bg-white border border-slate-200 rounded-md text-[11px] text-slate-600">
                               {kw}
                             </span>
                           ))}
@@ -3914,16 +5834,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                   <p className="text-xs text-slate-400 mt-1 truncate max-w-[400px]">{editingItem.title || editingItem.name}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => {
-                      setHistoryItemId(editingItem.id);
-                      setShowHistory(true);
-                    }}
-                    className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400 hover:text-blue-600"
-                    title="历史记录"
-                  >
-                    <ICONS.History className="w-6 h-6" />
-                  </button>
+
                   <button 
                     onClick={() => {
                       setIsEditModalOpen(false);
@@ -3951,24 +5862,43 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                       <div className="flex-1 space-y-1">
                         <p className="text-xs font-bold text-slate-900 truncate">{editingItem.name}</p>
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-mono ${(editingItem.size || 0) > 500 * 1024 ? 'text-amber-600 font-bold' : 'text-slate-500'}`}>
+                          <span className={`text-[11px] font-mono ${(editingItem.size || 0) > 500 * 1024 ? 'text-amber-600 font-bold' : 'text-slate-500'}`}>
                             当前大小: {editingItem.size ? (editingItem.size > 1024 * 1024 ? `${(editingItem.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(editingItem.size / 1024)} KB`) : '未知'}
                           </span>
                           {lastCompressedId === editingItem.id && (
-                            <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 animate-bounce">
+                            <span className="text-[11px] text-emerald-500 font-bold flex items-center gap-1 animate-bounce">
                               <ICONS.CheckCircle className="w-2.5 h-2.5" />
                               压缩成功
                             </span>
                           )}
                           {(editingItem.size || 0) > 500 * 1024 && lastCompressedId !== editingItem.id && (
-                            <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1">
+                            <span className="text-[11px] text-amber-500 font-bold flex items-center gap-1">
                               <ICONS.AlertTriangle className="w-2.5 h-2.5" />
                               建议压缩
                             </span>
                           )}
                         </div>
-                        <p className="text-[10px] text-slate-400">所属: {editingItem.parentTitle}</p>
+                        <p className="text-[11px] text-slate-400">所属: {editingItem.parentTitle}</p>
                       </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <div className="flex justify-between items-end mb-2">
+                        <label className="block text-xs font-bold text-slate-600 uppercase">图片名称 (文件名)</label>
+                        {isImageNameMeaningless(editingItem.name) && (
+                          <span className="text-[11px] text-amber-500 font-bold flex items-center gap-1">
+                            <ICONS.AlertTriangle className="w-3 h-3" />
+                            名称不规范
+                          </span>
+                        )}
+                      </div>
+                      <input 
+                        type="text"
+                        value={editingItem.name || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500 transition-all"
+                        placeholder="输入图片具有意义的新名称..."
+                      />
                     </div>
 
                     <div>
@@ -3997,7 +5927,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             }
                           }}
                           disabled={isGenerating === `${editingItem.id}-altText`}
-                          className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                          className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                         >
                           {isGenerating === `${editingItem.id}-altText` ? (
                             <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
@@ -4017,40 +5947,12 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
 
                     <div className="flex gap-3 pt-4">
                       <button 
-                        onClick={() => handleCompressImage(editingItem)}
-                        disabled={isCompressing === editingItem.id}
-                        className={`flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
-                          lastCompressedId === editingItem.id 
-                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                            : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
-                        }`}
-                      >
-                        {isCompressing === editingItem.id ? (
-                          <>
-                            <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
-                              <ICONS.RefreshCw className="w-4 h-4" />
-                            </motion.div>
-                            压缩中...
-                          </>
-                        ) : lastCompressedId === editingItem.id ? (
-                          <>
-                            <ICONS.CheckCircle className="w-4 h-4" />
-                            已压缩
-                          </>
-                        ) : (
-                          <>
-                            <ICONS.Minimize className="w-4 h-4" />
-                            压缩图片
-                          </>
-                        )}
-                      </button>
-                      <button 
                         onClick={() => {
-                          handleUpdateAltText(editingItem, editingItem.altText);
+                          handleUpdateAltText(editingItem, editingItem.altText, editingItem.name);
                           setIsEditModalOpen(false);
                           setEditingItem(null);
                         }}
-                        className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
+                        className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
                       >
                         保存修改
                       </button>
@@ -4064,7 +5966,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                         <button 
                           onClick={() => handleGenerateKeywords(aiTab.slice(0, -1) as any, editingItem)}
                           disabled={isGeneratingKeywords === editingItem.id}
-                          className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                          className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                         >
                           {isGeneratingKeywords === editingItem.id ? (
                             <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
@@ -4123,7 +6025,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           }}
                         />
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1">
+                      <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
                         <ICONS.Info className="w-3 h-3" />
                         点击关键词可将其设为“主关键词”，AI 优化时将重点包含该词。
                       </p>
@@ -4136,7 +6038,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           <button 
                             onClick={() => handleAiOptimizeItemField('seoTitle')}
                             disabled={isGenerating === `${editingItem.id}-seoTitle`}
-                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                            className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                           >
                             {isGenerating === `${editingItem.id}-seoTitle` ? (
                               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
@@ -4146,7 +6048,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             AI 优化
                           </button>
                         </div>
-                        <span className={`text-[10px] font-bold ${(editingItem.seoTitle?.length || 0) > 70 ? 'text-red-500' : 'text-slate-400'}`}>
+                        <span className={`text-[11px] font-bold ${(editingItem.seoTitle?.length || 0) > 70 ? 'text-red-500' : 'text-slate-400'}`}>
                           {editingItem.seoTitle?.length || 0} / 70
                         </span>
                       </div>
@@ -4166,7 +6068,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           <button 
                             onClick={() => handleAiOptimizeItemField('seoDescription')}
                             disabled={isGenerating === `${editingItem.id}-seoDescription`}
-                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                            className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                           >
                             {isGenerating === `${editingItem.id}-seoDescription` ? (
                               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
@@ -4176,7 +6078,7 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                             AI 优化
                           </button>
                         </div>
-                        <span className={`text-[10px] font-bold ${(editingItem.seoDescription?.length || 0) > 160 ? 'text-red-500' : 'text-slate-400'}`}>
+                        <span className={`text-[11px] font-bold ${(editingItem.seoDescription?.length || 0) > 160 ? 'text-red-500' : 'text-slate-400'}`}>
                           {editingItem.seoDescription?.length || 0} / 160
                         </span>
                       </div>
@@ -4198,6 +6100,23 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           onChange={(e) => setEditingItem({ ...editingItem, seoUrl: e.target.value })}
                           className="flex-1 p-3 bg-transparent text-sm outline-none"
                           placeholder="url-slug"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 uppercase mb-2 flex items-center justify-between">
+                        <span>重定向目标链接 (用于修复 404)</span>
+                        <span className="text-[11px] text-slate-450 font-normal lowercase">(可选)</span>
+                      </label>
+                      <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 focus-within:border-blue-500 transition-all">
+                        <span className="text-slate-400 text-xs">🔗</span>
+                        <input 
+                          type="text"
+                          value={editingItem.redirectUrl || ''}
+                          onChange={(e) => setEditingItem({ ...editingItem, redirectUrl: e.target.value })}
+                          className="flex-1 p-3 bg-transparent text-sm outline-none font-semibold text-slate-700"
+                          placeholder="例如: /products/new-item 或 https://..."
                         />
                       </div>
                     </div>
@@ -4227,7 +6146,8 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                           seoTitle: editingItem.seoTitle,
                           seoDescription: editingItem.seoDescription,
                           seoUrl: editingItem.seoUrl,
-                          primaryKeyword: editingItem.primaryKeyword
+                          primaryKeyword: editingItem.primaryKeyword,
+                          redirectUrl: editingItem.redirectUrl
                         })}
                         className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
                       >
@@ -4418,6 +6338,47 @@ Prioritize using the "Selected Keywords" and align with the "Overall SEO Strateg
                     </button>
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Strategy Warning Modal */}
+      <AnimatePresence>
+        {showStrategyWarningModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-sm rounded-[32px] shadow-2xl overflow-hidden p-10 text-center space-y-8"
+            >
+              <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-[32px] flex items-center justify-center mx-auto shadow-inner">
+                <ICONS.AlertTriangle className="w-12 h-12" />
+              </div>
+              <div className="space-y-3">
+                <h3 className="text-2xl font-black text-slate-900">请先生成 SEO 策略</h3>
+                <p className="text-slate-500 leading-relaxed font-medium">
+                  为了获得更精准的 AI 优化内容，建议您先输入品牌信息生成全局优化方案。
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={() => {
+                    setShowStrategyWarningModal(false);
+                    setAiMode('chat');
+                    setActiveTab('ai');
+                  }}
+                  className="w-full py-5 bg-amber-600 text-white rounded-2xl font-bold hover:bg-amber-700 transition-all shadow-xl shadow-amber-500/20 active:scale-95"
+                >
+                  前往生成策略
+                </button>
+                <button 
+                  onClick={() => setShowStrategyWarningModal(false)}
+                  className="w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all text-sm active:scale-95"
+                >
+                  稍后再说
+                </button>
               </div>
             </motion.div>
           </div>

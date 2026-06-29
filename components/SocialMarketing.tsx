@@ -250,7 +250,7 @@ const SocialMarketing: React.FC<SocialMarketingProps> = ({ products, onOpenSetti
                             : 'border-slate-200 hover:border-slate-300 text-slate-600'
                       }`}
                     >
-                      <div className={`w-5 h-5 rounded-md ${platform.color} flex items-center justify-center text-[10px] font-bold text-white`}>
+                      <div className={`w-5 h-5 rounded-md ${platform.color} flex items-center justify-center text-[11px] font-bold text-white`}>
                         {platform.icon}
                       </div>
                       <span className="text-sm font-medium">{platform.name}</span>
@@ -590,7 +590,7 @@ const SocialMarketing: React.FC<SocialMarketingProps> = ({ products, onOpenSetti
                         const platform = platforms.find(pl => pl.id === pId);
                         return (
                           <div key={pId} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50 border border-slate-100">
-                            <div className={`w-5 h-5 rounded-md ${platform?.color} flex items-center justify-center text-[10px] font-bold text-white`}>
+                            <div className={`w-5 h-5 rounded-md ${platform?.color} flex items-center justify-center text-[11px] font-bold text-white`}>
                               {platform?.icon}
                             </div>
                             <span className="text-xs font-medium text-slate-700">{platform?.name}</span>

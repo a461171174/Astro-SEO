@@ -266,7 +266,7 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({
                   >
                     <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
                     <div className="w-full">
-                      <p className="text-[10px] text-gray-500 truncate mb-1" title={fileName}>{fileName}</p>
+                      <p className="text-[11px] text-gray-500 truncate mb-1" title={fileName}>{fileName}</p>
                       <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
                         <div 
                           className="h-full bg-indigo-500 transition-all duration-300" 

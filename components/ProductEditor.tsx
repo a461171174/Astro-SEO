@@ -18,13 +18,15 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Product, ProductStatus, MediaItem, VariantOption, ProductVariant } from '../types';
+import { Product, ProductStatus, MediaItem, VariantOption, ProductVariant, MetafieldDefinition } from '../types';
 import { ICONS } from '../constants';
 import { isAbortError } from '../utils';
 import SEOSection from './SEOSection';
 import { MediaLibrary } from './MediaLibrary';
 import { geminiService } from '../services/geminiService';
 import { mediaService } from '../services/mediaService';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 import Markdown from 'react-markdown';
 
 interface SortableMediaItemProps {
@@ -85,7 +87,7 @@ const SortableMediaItem: React.FC<SortableMediaItemProps> = ({ item, index, onEd
         </button>
       </div>
       {index === 0 && (
-        <div className="absolute top-2 left-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm z-20">主图</div>
+        <div className="absolute top-2 left-2 bg-blue-600 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm z-20">主图</div>
       )}
     </div>
   );
@@ -287,6 +289,15 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
   // Track if SEO fields should auto-sync with title
   const [isSeoTitleAuto, setIsSeoTitleAuto] = useState(!initialProduct || !initialProduct.seoTitle);
   const [isSeoUrlAuto, setIsSeoUrlAuto] = useState(!initialProduct || !initialProduct.seoUrl);
+  const [metafieldDefinitions, setMetafieldDefinitions] = useState<MetafieldDefinition[]>([]);
+
+  React.useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'metafieldDefinitions'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MetafieldDefinition));
+      setMetafieldDefinitions(data.filter(def => def.target === '商品'));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'metafieldDefinitions'));
+    return () => unsub();
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -731,7 +742,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">建议标题</h4>
                   <button 
                     onClick={() => applySEOSuggestion('title')}
-                    className="text-[10px] bg-indigo-600 text-white px-2 py-1 rounded hover:bg-indigo-700 transition-colors"
+                    className="text-[11px] bg-indigo-600 text-white px-2 py-1 rounded hover:bg-indigo-700 transition-colors"
                   >
                     应用
                   </button>
@@ -746,7 +757,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">建议摘要</h4>
                   <button 
                     onClick={() => applySEOSuggestion('summary')}
-                    className="text-[10px] bg-indigo-600 text-white px-2 py-1 rounded hover:bg-indigo-700 transition-colors"
+                    className="text-[11px] bg-indigo-600 text-white px-2 py-1 rounded hover:bg-indigo-700 transition-colors"
                   >
                     应用
                   </button>
@@ -799,7 +810,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-slate-900">{initialProduct ? '编辑实体产品' : '创建实体产品'}</h1>
-            <span className="px-2 py-0.5 bg-green-50 text-green-600 text-[10px] font-bold rounded border border-green-100 uppercase">
+            <span className="px-2 py-0.5 bg-green-50 text-green-600 text-[11px] font-bold rounded border border-green-100 uppercase">
               {product.status === ProductStatus.ACTIVE ? '上架' : product.status === ProductStatus.DRAFT ? '草稿' : '未上架'}
             </span>
           </div>
@@ -833,7 +844,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                   <button 
                     onClick={handleGenerateSEO}
                     disabled={isSEOLoading}
-                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition-colors"
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 transition-colors"
                   >
                     {isSEOLoading ? (
                       <span className="flex items-center gap-1">
@@ -854,7 +865,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                     onChange={(e) => setProduct({ ...product, title: e.target.value })}
                     className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 text-sm transition-all"
                   />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">
                     {product.title?.length || 0}/255
                   </span>
                 </div>
@@ -869,7 +880,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                     onChange={(e) => setProduct({ ...product, summary: e.target.value })}
                     className="w-full h-20 px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 text-sm resize-none transition-all"
                   />
-                  <span className="absolute right-3 bottom-2 text-[10px] text-slate-400">
+                  <span className="absolute right-3 bottom-2 text-[11px] text-slate-400">
                     {product.summary?.length || 0}/400
                   </span>
                 </div>
@@ -912,7 +923,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                     ) : (
                       <>
                         <ICONS.Plus />
-                        <span className="text-[10px] mt-1 font-bold">直接上传</span>
+                        <span className="text-[11px] mt-1 font-bold">直接上传</span>
                       </>
                     )}
                   </button>
@@ -921,7 +932,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
                     className="aspect-square border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center text-slate-400 hover:border-blue-400 hover:text-blue-600 transition-all hover:bg-blue-50/50"
                   >
                     <ICONS.Image className="w-5 h-5" />
-                    <span className="text-[10px] mt-1 font-bold">素材库</span>
+                    <span className="text-[11px] mt-1 font-bold">素材库</span>
                   </button>
                 </div>
               </SortableContext>
@@ -1112,6 +1123,87 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
             onManualTitleChange={() => setIsSeoTitleAuto(false)}
             onManualUrlChange={() => setIsSeoUrlAuto(false)}
           />
+
+          {/* Extended Fields (Metafields) Section */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">扩展字段</h2>
+                <p className="text-sm text-slate-500 mt-1">管理此商品的额外自定义数据</p>
+              </div>
+            </div>
+            <div className="p-8 space-y-4">
+              {metafieldDefinitions.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 text-sm">
+                  暂无商品扩展字段定义，请先在全局设置中添加。
+                </div>
+              ) : (
+                metafieldDefinitions.map((def) => {
+                  const value = product.extendedFields?.[def.key] || '';
+                  return (
+                    <div key={def.id} className="flex items-start gap-4">
+                      <div className="flex-1 space-y-2">
+                        <label className="text-xs font-medium text-slate-700">{def.name}</label>
+                      </div>
+                      <div className="flex-[2] space-y-2">
+                        {def.type === '布尔值' ? (
+                          <label className="flex items-center gap-2 cursor-pointer mt-2">
+                            <input 
+                              type="checkbox"
+                              checked={value === 'true' || value === true}
+                              onChange={(e) => {
+                                setProduct({
+                                  ...product,
+                                  extendedFields: {
+                                    ...(product.extendedFields || {}),
+                                    [def.key]: e.target.checked
+                                  }
+                                });
+                              }}
+                              className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-slate-700">是 / 否</span>
+                          </label>
+                        ) : def.type === '富文本' ? (
+                          <textarea 
+                            value={typeof value === 'string' ? value : JSON.stringify(value)}
+                            onChange={(e) => {
+                              setProduct({
+                                ...product,
+                                extendedFields: {
+                                  ...(product.extendedFields || {}),
+                                  [def.key]: e.target.value
+                                }
+                              });
+                            }}
+                            rows={3}
+                            className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 text-sm resize-none"
+                            placeholder={`输入${def.name}...`}
+                          />
+                        ) : (
+                          <input 
+                            type={def.type === '数字' ? 'number' : 'text'} 
+                            value={typeof value === 'string' ? value : JSON.stringify(value)}
+                            onChange={(e) => {
+                              setProduct({
+                                ...product,
+                                extendedFields: {
+                                  ...(product.extendedFields || {}),
+                                  [def.key]: e.target.value
+                                }
+                              });
+                            }}
+                            className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
+                            placeholder={`输入${def.name}...`}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Side Column */}
@@ -1143,7 +1235,7 @@ const ProductEditor: React.FC<ProductEditorProps> = ({
               </div>
               <div className="flex flex-wrap gap-2">
                 {['厂商', '标签', '展示标签', '自定义产品类型'].map(btn => (
-                  <button key={btn} className="px-3 py-1.5 bg-slate-50 border border-slate-100 rounded text-[10px] font-medium text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1">
+                  <button key={btn} className="px-3 py-1.5 bg-slate-50 border border-slate-100 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1">
                     {btn}
                     {btn === '展示标签' && <div className="text-slate-400"><ICONS.Help /></div>}
                   </button>

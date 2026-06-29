@@ -92,7 +92,7 @@ const CollectionTable: React.FC<CollectionTableProps> = ({
                   </td>
                   <td className="p-4 text-slate-600">{c.productIds.length} 个商品</td>
                   <td className="p-4">
-                    <span className="px-2 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded border border-slate-200 uppercase">
+                    <span className="px-2 py-1 bg-slate-100 text-slate-600 text-[11px] font-bold rounded border border-slate-200 uppercase">
                       {c.template}
                     </span>
                   </td>

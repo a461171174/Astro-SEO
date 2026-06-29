@@ -1,9 +1,11 @@
 
 export const isAbortError = (error: any): boolean => {
   if (!error) return false;
-  const message = (error.message || String(error)).toLowerCase();
-  const name = (error.name || '').toLowerCase();
-  const code = (error.code || '').toLowerCase();
+  
+  // Handle cases where error might be an object with a message or a string
+  const message = String(error.message || (typeof error === 'string' ? error : JSON.stringify(error))).toLowerCase();
+  const name = String(error.name || '').toLowerCase();
+  const code = String(error.code || (error.cause?.code) || '').toLowerCase();
   
   return (
     name === 'aborterror' ||
@@ -15,11 +17,14 @@ export const isAbortError = (error: any): boolean => {
     message.includes('user aborted') ||
     message.includes('request aborted') ||
     message.includes('the user aborted a request') ||
+    message.includes('load failed') ||
+    message.includes('fetch failed') ||
     code === 'cancelled' ||
     code === 'canceled' ||
     code === 'storage/canceled' ||
     code === 'unavailable' ||
-    code === 'deadline-exceeded'
+    code === 'deadline-exceeded' ||
+    code === 'auth/network-request-failed'
   );
 };
 

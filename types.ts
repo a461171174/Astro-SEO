@@ -1,4 +1,15 @@
 
+export interface MetafieldDefinition {
+  id: string;
+  name: string;
+  key: string;
+  type: string;
+  target: '商品' | '客户';
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export enum ProductStatus {
   ACTIVE = '上架',
   INACTIVE = '未上架',
@@ -52,6 +63,7 @@ export interface Product {
   seoTitle?: string;
   seoDescription?: string;
   seoUrl?: string;
+  redirectUrl?: string;
   keywords?: string[];
   primaryKeyword?: string;
   jsonLd?: string;
@@ -106,6 +118,7 @@ export interface Customer {
     title: string;
     timestamp: string;
   }[];
+  extendedFields?: { [key: string]: any };
 }
 
 export interface AnalyticsData {
@@ -135,6 +148,7 @@ export interface Collection {
   seoTitle?: string;
   seoDescription?: string;
   seoUrl?: string;
+  redirectUrl?: string;
   keywords?: string[];
   primaryKeyword?: string;
   jsonLd?: string;
@@ -164,6 +178,7 @@ export interface Blog {
   seoTitle?: string;
   seoDescription?: string;
   seoUrl?: string;
+  redirectUrl?: string;
   keywords?: string[];
   primaryKeyword?: string;
   jsonLd?: string;
@@ -187,7 +202,9 @@ export interface BlogSet {
   seoTitle?: string;
   seoDescription?: string;
   seoUrl?: string;
+  redirectUrl?: string;
   keywords?: string[];
+  primaryKeyword?: string;
   jsonLd?: string;
   history?: {
     seoTitle?: string;
@@ -209,6 +226,7 @@ export interface Page {
   seoTitle?: string;
   seoDescription?: string;
   seoUrl?: string;
+  redirectUrl?: string;
   keywords?: string[];
   primaryKeyword?: string;
   jsonLd?: string;
@@ -335,9 +353,18 @@ export interface BlogTask {
     seoTitle: string;
     seoDescription: string;
     keywords: string[];
+    seoUrl?: string;
     jsonLd?: string;
     score?: number;
     scoreReason?: string;
+    faqEnabled?: boolean;
+    faqItems?: { question: string; answer: string }[];
+    howToEnabled?: boolean;
+    howToName?: string;
+    howToDescription?: string;
+    howToDuration?: string;
+    howToSteps?: { name: string; text: string }[];
+    screenshots?: string[];
   };
   history?: {
     title: string;
@@ -346,8 +373,16 @@ export interface BlogTask {
     seoTitle: string;
     seoDescription: string;
     keywords: string[];
+    seoUrl?: string;
     jsonLd?: string;
     updatedAt: string;
+    faqEnabled?: boolean;
+    faqItems?: { question: string; answer: string }[];
+    howToEnabled?: boolean;
+    howToName?: string;
+    howToDescription?: string;
+    howToDuration?: string;
+    howToSteps?: { name: string; text: string }[];
   }[];
   resultBlogId?: string;
   error?: string;

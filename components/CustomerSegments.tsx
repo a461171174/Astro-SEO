@@ -91,7 +91,7 @@ const CustomerSegments: React.FC = () => {
                     <React.Fragment key={condition.id}>
                       {index > 0 && (
                         <div className="flex justify-center -my-2 relative z-10">
-                          <span className="px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-bold text-blue-600 shadow-sm">
+                          <span className="px-3 py-1 bg-white border border-slate-200 rounded-full text-[11px] font-bold text-blue-600 shadow-sm">
                             且 (AND)
                           </span>
                         </div>

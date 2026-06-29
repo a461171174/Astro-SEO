@@ -71,7 +71,7 @@ const GenericContentEditor: React.FC<GenericContentEditorProps> = ({ type, initi
       }
       
       if (isSeoUrlAuto) {
-        const newSlug = slugify(data.title || '');
+        const newSlug = data.id === 'home' ? '' : slugify(data.title || '');
         if (data.seoUrl !== newSlug) {
           updates.seoUrl = newSlug;
         }
@@ -151,13 +151,13 @@ const GenericContentEditor: React.FC<GenericContentEditorProps> = ({ type, initi
                   <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
                     <button 
                       onClick={() => setPreviewMode('edit')}
-                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${previewMode === 'edit' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                      className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${previewMode === 'edit' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
                     >
                       Edit
                     </button>
                     <button 
                       onClick={() => setPreviewMode('preview')}
-                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${previewMode === 'preview' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                      className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${previewMode === 'preview' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
                     >
                       Preview
                     </button>
@@ -199,7 +199,7 @@ const GenericContentEditor: React.FC<GenericContentEditorProps> = ({ type, initi
             seoTitle={data.seoTitle}
             seoDescription={data.seoDescription}
             seoUrl={data.seoUrl}
-            urlPrefix={urlPrefixes[type]}
+            urlPrefix={type === 'page' && data.id === 'home' ? '' : urlPrefixes[type]}
             onUpdate={(updates) => setData((prev: any) => ({ ...prev, ...updates }))}
             onManualTitleChange={() => setIsSeoTitleAuto(false)}
             onManualUrlChange={() => setIsSeoUrlAuto(false)}

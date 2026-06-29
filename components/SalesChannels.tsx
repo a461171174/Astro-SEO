@@ -72,11 +72,11 @@ const SalesChannels: React.FC<SalesChannelProps> = ({ channelName, products }) =
                 animate={{ height: `${h}%` }}
                 className="w-full bg-blue-100 rounded-t-lg relative group"
               >
-                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                   {Math.floor(h * 123)} 点击
                 </div>
               </motion.div>
-              <span className="text-[10px] text-slate-400">02-{14 + i}</span>
+              <span className="text-[11px] text-slate-400">02-{14 + i}</span>
             </div>
           ))}
         </div>

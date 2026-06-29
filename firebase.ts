@@ -47,8 +47,21 @@ export function handleFirestoreError(error: any, operationType: OperationType, p
     console.warn('Firebase operation cancelled/aborted:', operationType, path);
     return;
   }
+  
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const isQuota = errorMessage.includes('Quota exceeded') || 
+                  errorMessage.includes('resource-exhausted') || 
+                  (error && error.code === 'resource-exhausted');
+  
+  if (isQuota) {
+    console.warn('Firestore Quota Exceeded! Switching to offline mode gracefully.');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: { operationType, path } }));
+    }
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -64,8 +77,19 @@ export function handleFirestoreError(error: any, operationType: OperationType, p
     },
     operationType,
     path
+  };
+  
+  console.error('Firestore Error details: ', JSON.stringify(errInfo));
+  
+  // CRITICAL OPTIMIZATION: Do not throw error for read / write / list operations when quota is exceeded 
+  // or for general queries because it crashes the React Error Boundary and breaks the entire user screen.
+  if (isQuota || 
+      operationType === OperationType.LIST || 
+      operationType === OperationType.GET || 
+      operationType === OperationType.WRITE) {
+    return; // Graceful offline degradation
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -74,6 +98,8 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
+    if (isAbortError(error)) return;
+    
     if(error instanceof Error && error.message.includes('the client is offline')) {
       console.error("Please check your Firebase configuration. The client is offline.");
     }

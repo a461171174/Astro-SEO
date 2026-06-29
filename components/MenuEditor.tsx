@@ -94,7 +94,7 @@ const MenuEditor: React.FC<MenuEditorProps> = ({
   }, [editingItem?.item.type, selectionView, searchTerm, products, collections, blogs, blogSets, pages]);
 
   const categories = [
-    { id: 'home', label: '主页', icon: <ICONS.Home className="w-5 h-5" />, hasArrow: false, url: '/' },
+    { id: 'home', label: '站点启动清单', icon: <ICONS.CheckCircle className="w-5 h-5" />, hasArrow: false, url: '/' },
     { id: 'search', label: '搜索', icon: <ICONS.Search className="w-5 h-5" />, hasArrow: false, url: '/search' },
     { id: 'collection', label: '产品系列', icon: <ICONS.Tag className="w-5 h-5" />, hasArrow: true },
     { id: 'product', label: '产品', icon: <ICONS.Tag className="w-5 h-5" />, hasArrow: true },
@@ -117,7 +117,7 @@ const MenuEditor: React.FC<MenuEditorProps> = ({
                   <span className="text-slate-400"><ICONS.More className="w-4 h-4 rotate-90" /></span>
                   <div className="flex flex-col">
                     <span className="font-medium text-slate-700">{item.label}</span>
-                    <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <span className="text-[11px] text-slate-400 flex items-center gap-1">
                       <span className="px-1 bg-slate-200 rounded text-slate-500">{item.type}</span>
                       {item.url}
                     </span>
@@ -201,7 +201,7 @@ const MenuEditor: React.FC<MenuEditorProps> = ({
                 placeholder="例如：main-menu"
                 className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="text-[10px] text-slate-400">Handle 用于在代码中引用此菜单。</p>
+              <p className="text-[11px] text-slate-400">Handle 用于在代码中引用此菜单。</p>
             </div>
           </div>
         </div>

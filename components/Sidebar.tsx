@@ -39,7 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isStoreMenuOpen, setIsStoreMenuOpen] = useState(false);
 
   const navItems: { label: string; icon: React.ReactNode; hasSub?: boolean; children?: (string | { label: string; icon: React.ReactNode })[] }[] = [
-    { label: '主页', icon: <ICONS.Home /> },
+    { label: '站点启动清单', icon: <ICONS.CheckCircle /> },
     { 
       label: '商品', 
       icon: <ICONS.Store />,
@@ -155,96 +155,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Store Switcher */}
-      <div className={`px-3 mb-2 relative ${isCollapsed ? 'flex justify-center' : ''}`}>
-        <div 
-          onClick={() => {
-            setIsStoreMenuOpen(!isStoreMenuOpen);
-            if (isCollapsed && !isStoreMenuOpen) onToggleCollapse();
-          }}
-          className={`flex items-center gap-2 cursor-pointer hover:bg-slate-200 p-2 rounded-xl transition-all duration-200 group ${
-            isCollapsed ? 'w-10 h-10 justify-center' : 'w-full bg-white/50 border border-slate-200/50 shadow-sm'
-          }`}
-        >
-          <div className={`w-6 h-6 rounded flex-shrink-0 flex items-center justify-center text-white font-bold text-[10px] shadow-sm ${
-            stores.find(s => s.name === currentStore)?.color || 'bg-blue-600'
-          }`}>
-            {stores.find(s => s.name === currentStore)?.icon || 'S'}
-          </div>
-          {!isCollapsed && (
-            <>
-              <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider leading-none mb-0.5">当前店铺</p>
-                <p className="text-sm font-bold text-slate-900 truncate leading-none" title={currentStore}>{currentStore}</p>
-              </div>
-              <svg className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isStoreMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </>
-          )}
-        </div>
-
-        <AnimatePresence>
-          {isStoreMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setIsStoreMenuOpen(false)} />
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                className={`absolute z-40 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden ${
-                  isCollapsed ? 'left-full top-0 ml-2 w-56' : 'left-3 right-3 top-full mt-1'
-                }`}
-              >
-                <div className="p-2 space-y-1">
-                  <p className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">切换店铺</p>
-                  {stores.map(store => (
-                    <button
-                      key={store.id}
-                      onClick={() => {
-                        onSwitchStore(store.name);
-                        setIsStoreMenuOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${
-                        currentStore === store.name 
-                          ? 'bg-blue-50 text-blue-700' 
-                          : 'hover:bg-slate-50 text-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-6 h-6 ${store.color} rounded flex items-center justify-center text-white font-bold text-[10px] shadow-sm`}>
-                          {store.icon}
-                        </div>
-                        <span className="text-sm font-bold">{store.name}</span>
-                      </div>
-                      {currentStore === store.name && (
-                        <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                        </svg>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div className="border-t border-slate-100 p-2 bg-slate-50/50">
-                  <button
-                    onClick={() => {
-                      toast.info('正在前往创建新店铺页面...');
-                      setIsStoreMenuOpen(false);
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white hover:shadow-sm text-slate-600 transition-all border border-transparent hover:border-slate-200"
-                  >
-                    <div className="w-6 h-6 bg-white rounded flex items-center justify-center text-slate-400 border border-slate-100 shadow-sm">
-                      <ICONS.Plus className="w-3.5 h-3.5" />
-                    </div>
-                    <span className="text-sm font-bold">创建新店铺</span>
-                  </button>
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-      </div>
-
       {/* Nav Content */}
       <nav className={`flex-1 ${isCollapsed ? 'px-2' : 'px-3'} py-4 space-y-2`}>
         {filteredNavItems.map((item) => {
@@ -257,6 +167,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           return (
             <div key={item.label}>
               <button
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => toggleMenu(item)}
                 className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-3'} py-2.5 rounded-xl transition-all duration-200 group relative ${
                   isActive 
@@ -338,7 +249,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="text-[11px] font-bold text-slate-900 whitespace-nowrap truncate" title={user?.displayName || '用户'}>{user?.displayName || '用户'}</span>
-                <span className="text-[9px] text-slate-400 leading-none">免费版</span>
+                <span className="text-[11px] text-slate-400 leading-none">免费版</span>
               </div>
             )}
           </div>
@@ -356,7 +267,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="absolute bottom-full left-full ml-2 mb-2 w-44 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1.5 overflow-hidden">
               <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
                 <div className="text-[11px] font-bold text-slate-900 truncate" title={user?.displayName || ''}>{user?.displayName}</div>
-                <div className="text-[9px] text-slate-400 truncate" title={user?.email || ''}>{user?.email}</div>
+                <div className="text-[11px] text-slate-400 truncate" title={user?.email || ''}>{user?.email}</div>
               </div>
               <button 
                 onClick={onLogout}

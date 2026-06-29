@@ -74,6 +74,16 @@
 //   - createdAt: timestamp
 //   - updatedAt: timestamp
 //
+// Collection: metafieldDefinitions
+// Fields:
+//   - name: string (required)
+//   - key: string (required)
+//   - type: string (required)
+//   - target: string (required, enum: ['商品', '客户'])
+//   - description: string
+//   - createdAt: timestamp
+//   - updatedAt: timestamp
+//
 // Collection: media
 // Fields:
 //   - url: string (required)
@@ -299,9 +309,18 @@ service cloud.firestore {
              data.keywords is list;
     }
 
+    function isValidSetting(data) {
+      return true; // Settings can be flexible
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+    
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
@@ -354,6 +373,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isEditor() && isValidPage(request.resource.data);
       allow update: if isEditor() && isValidPage(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /metafieldDefinitions/{metafieldId} {
+      allow read: if isAuthenticated();
+      allow create: if isEditor();
+      allow update: if isEditor();
       allow delete: if isAdmin();
     }
 

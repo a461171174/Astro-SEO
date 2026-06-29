@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { ICONS } from '../constants';
 
 interface HomeProps {
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: string) => void;
   onNavigate?: (view: string) => void;
 }
 
@@ -18,11 +18,12 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings, onNavigate }) => {
   ];
 
   const checklist = [
-    { label: '创建商品', icon: '🛒', completed: true },
-    { label: '装修店铺', icon: '🎨', completed: true },
-    { label: '店名设置', icon: '🏷️', completed: true },
-    { label: '绑定社交媒体', icon: '📱', completed: false },
-    { label: '域名设置', icon: '🌐', completed: false },
+    { label: '创建商品', icon: '🛒', completed: true, view: '商品' },
+    { label: '装修店铺', icon: '🎨', completed: true, view: '装修' },
+    { label: '基础设置', icon: '🏷️', completed: true, section: '通用设置' },
+    { label: '域名设置', icon: '🌐', completed: false, section: '域名' },
+    { label: '在谷歌上找到您', icon: '🔍', completed: false, view: 'SEO策略' },
+    { label: '绑定社交媒体', icon: '📱', completed: false, section: '通用设置' },
   ];
 
   const recommendations = [
@@ -85,89 +86,156 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings, onNavigate }) => {
   ];
 
   return (
-    <div className="max-w-[1200px] mx-auto py-12 px-6 space-y-16">
-      {/* Hero Section */}
-      <div className="flex flex-col items-center text-center space-y-8">
-        <h1 className="text-5xl font-bold text-slate-900 tracking-tight">让站点，讲好你的故事</h1>
+    <div className="max-w-[1200px] mx-auto py-4 px-6 space-y-8">
+      {/* Enhanced Status Bar */}
+      <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm overflow-hidden relative group">
+        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+          <ICONS.Zap className="w-48 h-48 -rotate-12" />
+        </div>
         
-        <div className="w-full max-w-3xl relative">
-          <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 rounded-[32px] blur opacity-20 group-hover:opacity-40 transition duration-1000 group-hover:duration-200"></div>
-          <div className="relative bg-white border border-slate-200 rounded-[28px] shadow-xl p-6 flex flex-col gap-4">
-            <textarea 
-              placeholder="告诉 AI 你想做什么"
-              className="w-full h-24 text-lg text-slate-600 placeholder-slate-300 outline-none resize-none bg-transparent"
-            />
-            <div className="flex items-center justify-between">
-              <button className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
-                <ICONS.Plus className="w-5 h-5" />
-              </button>
-              <button className="w-10 h-10 bg-slate-900 text-white rounded-full flex items-center justify-center hover:bg-slate-800 transition-colors shadow-lg">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
+        <div className="relative flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="space-y-3 flex-1">
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">站点启动清单</h1>
+              <div className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-bold ring-1 ring-blue-100 uppercase tracking-wider">
+                Progress
+              </div>
+            </div>
+            <p className="text-slate-500 font-medium leading-relaxed max-w-lg">
+              完成以下核心步骤，让您的店铺正式上线。达成 100% 进度即可解锁 <span className="text-orange-500 font-black italic">Go Global</span> 极速启动奖励。
+            </p>
+            
+            <div className="flex items-center gap-2 pt-1">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-[11px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                本周已有 <span className="text-slate-900 font-black">2,541</span> 位卖家成功发布店铺
+              </span>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
-          {quickActions.map((action) => (
-            <button 
-              key={action.label}
-              onClick={() => onNavigate?.(action.view)}
-              className={`flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-full shadow-sm hover:shadow-md transition-all group`}
-            >
-              <span className={`${action.color} group-hover:scale-110 transition-transform`}>{action.icon}</span>
-              <span className="text-sm font-bold text-slate-700">{action.label}</span>
-            </button>
-          ))}
+          <div className="flex flex-col items-center gap-4 bg-slate-50/50 p-6 rounded-[24px] border border-slate-100 shadow-inner">
+            <div className="relative w-32 h-32">
+              <svg className="w-full h-full transform -rotate-90">
+                <circle
+                  cx="64"
+                  cy="64"
+                  r="58"
+                  stroke="currentColor"
+                  strokeWidth="10"
+                  fill="transparent"
+                  className="text-slate-200"
+                />
+                <motion.circle
+                  initial={{ strokeDasharray: 364, strokeDashoffset: 364 }}
+                  animate={{ strokeDashoffset: 364 - (364 * (checklist.filter(i => i.completed).length / checklist.length)) }}
+                  cx="64"
+                  cy="64"
+                  r="58"
+                  stroke="currentColor"
+                  strokeWidth="10"
+                  strokeDasharray={364}
+                  fill="transparent"
+                  strokeLinecap="round"
+                  className="text-blue-600"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-3xl font-black text-slate-900 leading-none">
+                  {Math.round((checklist.filter(i => i.completed).length / checklist.length) * 100)}%
+                </span>
+                <span className="text-[11px] font-black text-slate-400 mt-1 uppercase">Ready</span>
+              </div>
+            </div>
+            <div className="text-center space-y-1">
+              <p className="text-xs font-black text-slate-900 uppercase tracking-tighter">
+                {checklist.filter(i => i.completed).length} / {checklist.length} 已完成
+              </p>
+              <div className="flex items-center gap-1 justify-center">
+                <ICONS.Zap className="w-3 h-3 text-orange-500 fill-current" />
+                <span className="text-[11px] font-bold text-orange-600 truncate">+15 奖励积分</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Checklist Section */}
+      {/* Checklist Grid Section */}
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold text-slate-900">启动清单 <span className="text-slate-400 font-medium ml-1">{checklist.filter(i => i.completed).length} / {checklist.length}</span></h2>
-            <div className="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-600 rounded-full" style={{ width: `${(checklist.filter(i => i.completed).length / checklist.length) * 100}%` }} />
-            </div>
+        <div className="flex items-center justify-between px-2">
+          <h2 className="text-xl font-black text-slate-900 flex items-center gap-3">
+            待办任务
+            <span className="text-xs font-medium text-slate-400">({checklist.filter(i => !i.completed).length} 项剩余)</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-xl transition-all">
+              <ICONS.Filter className="w-4 h-4" />
+            </button>
+            <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-xl transition-all">
+              <ICONS.Sort className="w-4 h-4" />
+            </button>
           </div>
-          <p className="text-xs text-slate-400">全部完成可获得 <span className="text-orange-500 font-bold">15</span> 个积分</p>
         </div>
 
-        <div className="grid grid-cols-5 gap-4 pb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {checklist.map((item, i) => (
-            <div 
+            <motion.div 
               key={i}
+              whileHover={{ y: -4 }}
               onClick={() => {
-                if (item.label === '绑定社交媒体' && onOpenSettings) {
-                  onOpenSettings();
+                if (item.view && onNavigate) {
+                  onNavigate(item.view);
+                } else if (item.section && onOpenSettings) {
+                  onOpenSettings(item.section);
                 }
               }}
-              className="bg-white border border-slate-100 rounded-2xl p-4 flex items-center justify-between group cursor-pointer hover:border-blue-200 hover:shadow-sm transition-all"
+              className={`group flex flex-col p-6 rounded-[24px] border transition-all cursor-pointer relative overflow-hidden ${
+                item.completed 
+                  ? 'bg-emerald-50/30 border-emerald-100' 
+                  : 'bg-white border-slate-200 hover:border-blue-500 hover:shadow-xl hover:shadow-blue-500/10'
+              }`}
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
-                  {item.icon}
+              {item.completed && (
+                <div className="absolute top-4 right-4 bg-emerald-500 text-white p-1 rounded-full">
+                  <ICONS.Check className="w-3 h-3 stroke-[3]" />
                 </div>
-                <span className="text-sm font-bold text-slate-700">{item.label}</span>
-              </div>
-              {item.completed ? (
-                <div className="w-5 h-5 bg-emerald-500 text-white rounded-full flex items-center justify-center">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              ) : (
-                <div className="w-5 h-5 border-2 border-slate-200 rounded-full" />
               )}
-            </div>
+              
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-sm mb-6 transition-transform group-hover:scale-110 ${
+                item.completed ? 'bg-white text-emerald-600' : 'bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white'
+              }`}>
+                {item.icon}
+              </div>
+
+              <div className="flex-1">
+                <h3 className={`text-lg font-black tracking-tight ${item.completed ? 'text-slate-400' : 'text-slate-900 group-hover:text-blue-600'}`}>
+                  {item.label}
+                </h3>
+              </div>
+
+              {!item.completed && (
+                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    待处理任务
+                  </span>
+                  <div className="text-xs font-black uppercase tracking-widest text-blue-600 flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                    Go setup
+                    <ICONS.ChevronRight className="w-3 h-3" />
+                  </div>
+                </div>
+              )}
+            </motion.div>
           ))}
         </div>
       </div>
 
       {/* Recommendations Section */}
-      <div className="space-y-8">
-        <h2 className="text-lg font-bold text-slate-900">Ai使用推荐</h2>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-900">AI 助手推荐</h2>
+          <button className="text-xs text-blue-600 font-bold hover:underline">查看更多</button>
+        </div>
         
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-4 gap-4">
           {recommendations.map((rec, i) => (
             <motion.div 
               key={i}
@@ -180,7 +248,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings, onNavigate }) => {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-bold text-slate-900">{rec.agent}</span>
-                  <span className="text-[10px] text-slate-400">· {rec.role}</span>
+                  <span className="text-[11px] text-slate-400">· {rec.role}</span>
                 </div>
               </div>
               <div className="px-4 pb-3">

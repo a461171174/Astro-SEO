@@ -11,7 +11,7 @@ interface StaffManagementProps {
 }
 
 const ALL_PERMISSIONS = [
-  { label: '主页' },
+  { label: '站点启动清单' },
   { label: '商品', children: ['商品管理', '系列'] },
   { label: '客户', children: ['客户', '细分'] },
   { label: '询盘' },
@@ -124,7 +124,7 @@ const StaffManagement: React.FC<StaffManagementProps> = ({ staffList }) => {
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-500" title={staff.email}>{staff.email}</td>
                 <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                  <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${
                     staff.role === 'admin' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'
                   }`}>
                     {staff.role === 'admin' ? '管理员' : '员工'}
@@ -136,7 +136,7 @@ const StaffManagement: React.FC<StaffManagementProps> = ({ staffList }) => {
                       <span className="text-xs text-slate-400 italic">全部权限</span>
                     ) : (
                       staff.permissions.map(p => (
-                        <span key={p} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]">
+                        <span key={p} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px]">
                           {p}
                         </span>
                       ))

@@ -69,11 +69,11 @@ const GenericListView: React.FC<GenericListViewProps> = ({
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
               {columns.map(col => (
-                <th key={col.key} className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <th key={col.key} className="px-6 py-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                   {col.label}
                 </th>
               ))}
-              <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-wider text-right">操作</th>
+              <th className="px-6 py-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">

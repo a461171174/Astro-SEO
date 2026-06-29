@@ -124,7 +124,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
           <div className="h-6 w-px bg-slate-200" />
           <div className="flex items-center gap-2 px-3 py-1 bg-green-50 rounded-full border border-green-100">
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] font-bold text-green-600 uppercase">兼容性检查通过</span>
+            <span className="text-[11px] font-bold text-green-600 uppercase">兼容性检查通过</span>
           </div>
           <div className="h-6 w-px bg-slate-200" />
           <div className="flex items-center gap-1">
@@ -175,7 +175,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
             <div className="w-72 bg-white border-r border-slate-200 flex flex-col">
               <div className="p-6 border-b border-slate-100">
                 <h3 className="text-sm font-bold text-slate-900">内容组件</h3>
-                <p className="text-[10px] text-slate-400 mt-1">拖拽或点击添加组件到邮件</p>
+                <p className="text-[11px] text-slate-400 mt-1">拖拽或点击添加组件到邮件</p>
               </div>
               <div className="p-4 grid grid-cols-2 gap-3">
                 {[
@@ -191,14 +191,14 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                     className="flex flex-col items-center justify-center p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-blue-200 hover:bg-blue-50/50 transition-all group"
                   >
                     <div className="text-slate-400 group-hover:text-blue-600 transition-colors">{tool.icon}</div>
-                    <span className="text-[10px] font-bold text-slate-600 mt-2">{tool.label}</span>
+                    <span className="text-[11px] font-bold text-slate-600 mt-2">{tool.label}</span>
                   </button>
                 ))}
               </div>
               <div className="mt-auto p-6 border-t border-slate-100">
                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                  <p className="text-[10px] font-bold text-blue-600 uppercase">小贴士</p>
-                  <p className="text-[10px] text-blue-500 mt-1 leading-relaxed">保持邮件简洁，突出核心行动按钮（CTA）能显著提高点击率。</p>
+                  <p className="text-[11px] font-bold text-blue-600 uppercase">小贴士</p>
+                  <p className="text-[11px] text-blue-500 mt-1 leading-relaxed">保持邮件简洁，突出核心行动按钮（CTA）能显著提高点击率。</p>
                 </div>
               </div>
             </div>
@@ -306,7 +306,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             </p>
                           )}
                           {block.content.showUnsubscribe && (
-                            <p className="mt-4 text-[10px] opacity-60">
+                            <p className="mt-4 text-[11px] opacity-60">
                               如果您不想再收到此类邮件，请点击 <span className="underline cursor-pointer">{block.content.unsubscribeText}</span>
                             </p>
                           )}
@@ -347,7 +347,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                       {selectedBlock.type === 'text' && (
                         <>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">内容</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">内容</label>
                             <textarea 
                               value={selectedBlock.content.text}
                               onChange={(e) => updateBlockContent(selectedBlock.id, { text: e.target.value })}
@@ -356,7 +356,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">字体</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">字体</label>
                               <select 
                                 value={selectedBlock.content.font}
                                 onChange={(e) => updateBlockContent(selectedBlock.id, { font: e.target.value })}
@@ -368,7 +368,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                               </select>
                             </div>
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">字号</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">字号</label>
                               <input 
                                 type="number" 
                                 value={selectedBlock.content.fontSize}
@@ -378,7 +378,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">颜色</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">颜色</label>
                             <div className="flex items-center gap-2">
                               <input 
                                 type="color" 
@@ -390,13 +390,13 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">对齐方式</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">对齐方式</label>
                             <div className="flex p-1 bg-slate-100 rounded-lg">
                               {['left', 'center', 'right'].map(a => (
                                 <button 
                                   key={a}
                                   onClick={() => updateBlockContent(selectedBlock.id, { align: a })}
-                                  className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${selectedBlock.content.align === a ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${selectedBlock.content.align === a ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                                 >
                                   {a === 'left' ? '左对齐' : a === 'center' ? '居中' : '右对齐'}
                                 </button>
@@ -409,7 +409,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                       {selectedBlock.type === 'image' && (
                         <>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">图片链接</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">图片链接</label>
                             <div className="flex gap-2">
                               <input 
                                 type="text" 
@@ -426,7 +426,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">代替文本 (Alt)</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">代替文本 (Alt)</label>
                             <input 
                               type="text" 
                               value={selectedBlock.content.alt}
@@ -435,7 +435,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">跳转链接 (URL)</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">跳转链接 (URL)</label>
                             <input 
                               type="text" 
                               value={selectedBlock.content.link}
@@ -445,7 +445,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">宽度 (%)</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">宽度 (%)</label>
                               <input 
                                 type="number" 
                                 value={selectedBlock.content.width}
@@ -454,7 +454,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">圆角 (px)</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">圆角 (px)</label>
                               <input 
                                 type="number" 
                                 value={selectedBlock.content.borderRadius}
@@ -469,7 +469,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                       {selectedBlock.type === 'button' && (
                         <>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">按钮文字</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">按钮文字</label>
                             <input 
                               type="text" 
                               value={selectedBlock.content.text}
@@ -479,7 +479,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">背景颜色</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">背景颜色</label>
                               <input 
                                 type="color" 
                                 value={selectedBlock.content.bg}
@@ -488,7 +488,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">文字颜色</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">文字颜色</label>
                               <input 
                                 type="color" 
                                 value={selectedBlock.content.color}
@@ -499,7 +499,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                           </div>
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">边框颜色</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">边框颜色</label>
                               <input 
                                 type="color" 
                                 value={selectedBlock.content.borderColor}
@@ -508,7 +508,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">圆角 (px)</label>
+                              <label className="text-[11px] font-bold text-slate-400 uppercase">圆角 (px)</label>
                               <input 
                                 type="number" 
                                 value={selectedBlock.content.borderRadius}
@@ -523,13 +523,13 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                       {selectedBlock.type === 'product' && (
                         <>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">展示列数</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">展示列数</label>
                             <div className="flex p-1 bg-slate-100 rounded-lg">
                               {[1, 2, 3].map(c => (
                                 <button 
                                   key={c}
                                   onClick={() => updateBlockContent(selectedBlock.id, { columns: c })}
-                                  className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${selectedBlock.content.columns === c ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
+                                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${selectedBlock.content.columns === c ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
                                 >
                                   {c} 列
                                 </button>
@@ -537,7 +537,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">按钮文案</label>
+                            <label className="text-[11px] font-bold text-slate-400 uppercase">按钮文案</label>
                             <input 
                               type="text" 
                               value={selectedBlock.content.buttonText}
@@ -601,7 +601,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                       )}
 
                       <div className="pt-4 border-t border-slate-100">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-2">间距 (上下左右)</label>
+                        <label className="text-[11px] font-bold text-slate-400 uppercase block mb-2">间距 (上下左右)</label>
                         <div className="grid grid-cols-4 gap-2">
                           {[0, 1, 2, 3].map(i => (
                             <input 
@@ -723,7 +723,7 @@ const EmailEditor: React.FC<EmailEditorProps> = ({ campaign, products, onSave, o
                         animate={{ opacity: 1, height: 'auto' }}
                         className="space-y-1.5"
                       >
-                        <label className="text-[10px] font-bold text-slate-400 uppercase">选择发送时间</label>
+                        <label className="text-[11px] font-bold text-slate-400 uppercase">选择发送时间</label>
                         <input 
                           type="datetime-local" 
                           value={settings.scheduledTime}

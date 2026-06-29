@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { MediaLibrary } from './MediaLibrary';
 import StaffManagement from './StaffManagement';
 import { MediaItem, Staff } from '../types';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { cleanObject } from '../utils';
 import { 
   Settings as SettingsIcon, 
   Globe, 
@@ -30,18 +33,108 @@ import {
 interface SettingsProps {
   onClose: () => void;
   staffList: Staff[];
+  initialSection?: string;
 }
 
-const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
-  const [activeSection, setActiveSection] = useState('通用设置');
+const COMMON_LANGUAGES = [
+  { lang: 'English', code: 'en-US' },
+  { lang: '简体中文', code: 'zh-CN' },
+  { lang: '繁體中文', code: 'zh-TW' },
+  { lang: '日本語', code: 'ja-JP' },
+  { lang: '한국어', code: 'ko-KR' },
+  { lang: 'Français', code: 'fr-FR' },
+  { lang: 'Deutsch', code: 'de-DE' },
+  { lang: 'Español', code: 'es-ES' },
+  { lang: 'Italiano', code: 'it-IT' },
+  { lang: 'Русский', code: 'ru-RU' },
+  { lang: 'Tiếng Việt', code: 'vi-VN' },
+  { lang: 'ไทย', code: 'th-TH' },
+  { lang: 'Bahasa Indonesia', code: 'id-ID' },
+];
+
+const Settings: React.FC<SettingsProps> = ({ onClose, staffList, initialSection }) => {
+  const [activeSection, setActiveSection] = useState(initialSection || '通用设置');
   const [isMediaLibraryOpen, setIsMediaLibraryOpen] = useState(false);
   const [logoMode, setLogoMode] = useState<'main' | 'square' | null>(null);
   const [logos, setLogos] = useState({ main: '', square: '' });
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // General Settings state
+  const [storeName, setStoreName] = useState('Happy Paws');
+  const [storeEmail, setStoreEmail] = useState('contact@happypaws.com');
+  const [timezone, setTimezone] = useState('(GMT+08:00) Beijing, Shanghai');
+  const [currency, setCurrency] = useState('USD ($)');
+
   const [socialLinks, setSocialLinks] = useState([
     { id: 1, name: 'Facebook', icon: 'FB', color: 'bg-[#1877F2]', url: '' },
     { id: 2, name: 'Instagram', icon: 'IG', color: 'bg-gradient-to-tr from-[#f9ce34] via-[#ee2a7b] to-[#6228d7]', url: '' },
     { id: 3, name: 'X (Twitter)', icon: 'X', color: 'bg-black', url: '' },
   ]);
+
+  const [languages, setLanguages] = useState([
+    { lang: 'English', code: 'en-US', isDefault: true },
+    { lang: '简体中文', code: 'zh-CN', isDefault: false },
+  ]);
+  const [isAddingLanguage, setIsAddingLanguage] = useState(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'store'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.languages && data.languages.length > 0) {
+          setLanguages(data.languages);
+        }
+        if (data.logos) {
+          setLogos(data.logos);
+        }
+        if (data.storeName) setStoreName(data.storeName);
+        if (data.storeEmail) setStoreEmail(data.storeEmail);
+        if (data.timezone) setTimezone(data.timezone);
+        if (data.currency) setCurrency(data.currency);
+      }
+    }, (error) => {
+      if (error.code !== 'permission-denied') {
+        handleFirestoreError(error, OperationType.GET, 'settings/store');
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSetDefaultLanguage = async (code: string) => {
+    const newLanguages = languages.map(l => ({ ...l, isDefault: l.code === code }));
+    setLanguages(newLanguages);
+    try {
+      await setDoc(doc(db, 'settings', 'store'), { languages: newLanguages }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/store');
+    }
+  };
+
+  const handleAddLanguage = async (langObj: { lang: string, code: string }) => {
+    if (languages.some(l => l.code === langObj.code)) return;
+    
+    const newLanguages = [...languages, { ...langObj, isDefault: false }];
+    setLanguages(newLanguages);
+    setIsAddingLanguage(false);
+    try {
+      await setDoc(doc(db, 'settings', 'store'), { languages: newLanguages }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/store');
+    }
+  };
+
+  const handleRemoveLanguage = async (code: string) => {
+    const langToRemove = languages.find(l => l.code === code);
+    if (!langToRemove || langToRemove.isDefault) return;
+
+    const newLanguages = languages.filter(l => l.code !== code);
+    setLanguages(newLanguages);
+    try {
+      await setDoc(doc(db, 'settings', 'store'), { languages: newLanguages }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/store');
+    }
+  };
 
   const addSocialLink = () => {
     const newId = socialLinks.length > 0 ? Math.max(...socialLinks.map(l => l.id)) + 1 : 1;
@@ -67,12 +160,40 @@ const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
     { id: '操作日志', icon: <History size={18} />, label: '操作日志' },
   ];
 
-  const handleLogoSelect = (items: MediaItem[]) => {
+  const handleLogoSelect = async (items: MediaItem[]) => {
     if (items.length > 0 && logoMode) {
-      setLogos(prev => ({ ...prev, [logoMode]: items[0].url }));
+      const newLogos = { ...logos, [logoMode]: items[0].url };
+      setLogos(newLogos);
+      try {
+        await setDoc(doc(db, 'settings', 'store'), { logos: newLogos }, { merge: true });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'settings/store');
+      }
     }
     setIsMediaLibraryOpen(false);
     setLogoMode(null);
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const settingsData = {
+        storeName,
+        storeEmail,
+        timezone,
+        currency,
+        logos,
+        languages,
+        updatedAt: new Date().toISOString()
+      };
+      
+      await setDoc(doc(db, 'settings', 'store'), cleanObject(settingsData), { merge: true });
+      // Show success state or toast if available
+      setTimeout(() => setIsSaving(false), 500);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/store');
+      setIsSaving(false);
+    }
   };
 
   const renderSectionContent = () => {
@@ -85,23 +206,46 @@ const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">店铺名称</label>
-                  <input type="text" defaultValue="Happy Paws" className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input 
+                    type="text" 
+                    value={storeName} 
+                    onChange={(e) => setStoreName(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">店铺邮箱</label>
-                  <input type="email" defaultValue="contact@happypaws.com" className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input 
+                    type="email" 
+                    value={storeEmail} 
+                    onChange={(e) => setStoreEmail(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">时区</label>
-                  <select className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <select 
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
                     <option>(GMT+08:00) Beijing, Shanghai</option>
+                    <option>(GMT+00:00) London</option>
+                    <option>(GMT-05:00) New York</option>
+                    <option>(GMT-08:00) Los Angeles</option>
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">币种</label>
-                  <select className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <select 
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
                     <option>USD ($)</option>
                     <option>CNY (¥)</option>
+                    <option>EUR (€)</option>
+                    <option>GBP (£)</option>
                   </select>
                 </div>
               </div>
@@ -314,33 +458,95 @@ const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
         );
       case '语言':
         return (
-          <div className="space-y-8">
+          <div className="space-y-8 relative">
             <section>
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold">店铺语言</h3>
-                <button className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors">
+                <button 
+                  onClick={() => setIsAddingLanguage(true)}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors"
+                >
                   <Plus size={16} /> 添加语言
                 </button>
               </div>
               <div className="space-y-3">
-                {[
-                  { lang: '简体中文', code: 'zh-CN', isDefault: true },
-                  { lang: 'English', code: 'en-US', isDefault: false },
-                ].map(item => (
-                  <div key={item.code} className="p-4 border border-slate-100 rounded-xl flex items-center justify-between">
+                {languages.map(item => (
+                  <div key={item.code} className="p-4 border border-slate-100 rounded-xl flex items-center justify-between bg-white shadow-sm">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-xs font-bold text-slate-500">{item.code}</div>
-                      <span className="font-medium">{item.lang}</span>
-                      {item.isDefault && <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[10px] font-bold rounded uppercase">默认</span>}
+                      <span className="font-medium text-slate-900">{item.lang}</span>
+                      {item.isDefault && <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-[11px] font-bold rounded uppercase">默认</span>}
                     </div>
                     <div className="flex gap-2">
+                      {!item.isDefault && (
+                        <button 
+                          onClick={() => handleSetDefaultLanguage(item.code)}
+                          className="px-3 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200 transition-colors"
+                        >
+                          设为默认
+                        </button>
+                      )}
                       <button className="px-3 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200 transition-colors">翻译管理</button>
-                      {!item.isDefault && <button className="px-3 py-1 text-slate-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>}
+                      {!item.isDefault && (
+                        <button 
+                          onClick={() => handleRemoveLanguage(item.code)}
+                          className="px-3 py-1 text-slate-400 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             </section>
+
+            {/* Add Language Modal Overlay */}
+            {isAddingLanguage && (
+              <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+                <div 
+                  className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                  onClick={() => setIsAddingLanguage(false)}
+                />
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+                >
+                  <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <h3 className="text-xl font-bold text-slate-900">添加语言</h3>
+                    <button 
+                      onClick={() => setIsAddingLanguage(false)}
+                      className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    {COMMON_LANGUAGES.filter(l => !languages.some(el => el.code === l.code)).map(lang => (
+                      <button
+                        key={lang.code}
+                        onClick={() => handleAddLanguage(lang)}
+                        className="w-full p-4 flex items-center justify-between hover:bg-slate-50 rounded-2xl transition-all group border border-transparent hover:border-slate-200"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-xs font-bold text-slate-500 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
+                            {lang.code}
+                          </div>
+                          <span className="font-bold text-slate-700 group-hover:text-slate-900">{lang.lang}</span>
+                        </div>
+                        <Plus size={18} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
+                      </button>
+                    ))}
+                    {COMMON_LANGUAGES.filter(l => !languages.some(el => el.code === l.code)).length === 0 && (
+                      <div className="py-12 text-center text-slate-400">
+                        所有常用语言已添加
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+            )}
           </div>
         );
       case '素材':
@@ -374,7 +580,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-600 text-[10px] font-bold rounded-full border border-green-100">
+                    <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-600 text-[11px] font-bold rounded-full border border-green-100">
                       <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
                       启用
                     </span>
@@ -477,8 +683,20 @@ const Settings: React.FC<SettingsProps> = ({ onClose, staffList }) => {
         <div className="flex items-center justify-between px-8 py-6 border-b border-slate-100">
           <h2 className="text-2xl font-black">{activeSection}</h2>
           <div className="flex items-center gap-4">
-            <button className="px-6 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">取消</button>
-            <button className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100">保存更改</button>
+            <button 
+              onClick={onClose}
+              className="px-6 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+            >
+              取消
+            </button>
+            <button 
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100 disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSaving && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              {isSaving ? '正在保存...' : '保存更改'}
+            </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-8 bg-slate-50/30">

@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { Customer } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Customer, MetafieldDefinition } from '../types';
 import { ICONS, MOCK_INQUIRIES } from '../constants';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 interface CustomerDetailProps {
   customer: Customer;
@@ -13,6 +15,15 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
   const [newTag, setNewTag] = useState('');
   const [editRemarks, setEditRemarks] = useState(customer.remarks);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'product' | 'page'>('all');
+  const [metafieldDefinitions, setMetafieldDefinitions] = useState<MetafieldDefinition[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'metafieldDefinitions'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MetafieldDefinition));
+      setMetafieldDefinitions(data.filter(def => def.target === '客户'));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'metafieldDefinitions'));
+    return () => unsub();
+  }, []);
 
   const customerInquiries = MOCK_INQUIRIES.filter(iq => iq.email === customer.email);
 
@@ -145,7 +156,7 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
                   {isEditing && (
                     <button 
                       onClick={handleAddPhone}
-                      className="text-[10px] text-blue-600 font-bold hover:underline"
+                      className="text-[11px] text-blue-600 font-bold hover:underline"
                     >
                       + 添加电话
                     </button>
@@ -253,7 +264,7 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">备注</p>
                 <button 
                   onClick={handleSaveRemarks}
-                  className="text-[10px] text-blue-600 font-bold hover:underline"
+                  className="text-[11px] text-blue-600 font-bold hover:underline"
                 >
                   保存备注
                 </button>
@@ -265,6 +276,80 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
                 className="w-full h-24 p-3 text-sm text-slate-600 bg-slate-50 rounded-lg border border-slate-100 outline-none focus:ring-2 focus:ring-blue-500/20 resize-none transition-all"
               />
             </div>
+
+            {/* Extended Fields (Metafields) Section */}
+            {metafieldDefinitions.length > 0 && (
+              <div className="pt-4 border-t border-slate-100">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">扩展字段</p>
+                <div className="space-y-3">
+                  {metafieldDefinitions.map((def) => {
+                    const value = customer.extendedFields?.[def.key] || '';
+                    return (
+                      <div key={def.id} className="space-y-1">
+                        <label className="text-xs font-medium text-slate-700">{def.name}</label>
+                        {isEditing ? (
+                          def.type === '布尔值' ? (
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={value === 'true' || value === true}
+                                onChange={(e) => {
+                                  setCustomer({
+                                    ...customer,
+                                    extendedFields: {
+                                      ...(customer.extendedFields || {}),
+                                      [def.key]: e.target.checked
+                                    }
+                                  });
+                                }}
+                                className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                              />
+                              <span className="text-sm text-slate-700">是 / 否</span>
+                            </label>
+                          ) : def.type === '富文本' ? (
+                            <textarea 
+                              value={typeof value === 'string' ? value : JSON.stringify(value)}
+                              onChange={(e) => {
+                                setCustomer({
+                                  ...customer,
+                                  extendedFields: {
+                                    ...(customer.extendedFields || {}),
+                                    [def.key]: e.target.value
+                                  }
+                                });
+                              }}
+                              rows={2}
+                              className="w-full px-2 py-1 text-sm border border-slate-200 rounded outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+                              placeholder={`输入${def.name}...`}
+                            />
+                          ) : (
+                            <input 
+                              type={def.type === '数字' ? 'number' : 'text'} 
+                              value={typeof value === 'string' ? value : JSON.stringify(value)}
+                              onChange={(e) => {
+                                setCustomer({
+                                  ...customer,
+                                  extendedFields: {
+                                    ...(customer.extendedFields || {}),
+                                    [def.key]: e.target.value
+                                  }
+                                });
+                              }}
+                              className="w-full px-2 py-1 text-sm border border-slate-200 rounded outline-none focus:ring-2 focus:ring-blue-500/20"
+                              placeholder={`输入${def.name}...`}
+                            />
+                          )
+                        ) : (
+                          <div className="text-sm text-slate-900">
+                            {def.type === '布尔值' ? (value === 'true' || value === true ? '是' : '否') : (typeof value === 'string' ? value : JSON.stringify(value) || '-')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -286,10 +371,10 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
                   <div key={iq.id} className="p-6 hover:bg-slate-50/50 transition-colors">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
-                        <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-[10px] font-bold uppercase">
+                        <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-[11px] font-bold uppercase">
                           {iq.productName}
                         </span>
-                        <span className={`px-2 py-1 rounded text-[10px] font-bold ${
+                        <span className={`px-2 py-1 rounded text-[11px] font-bold ${
                           iq.status === '待处理' ? 'bg-orange-50 text-orange-600' : 'bg-green-50 text-green-600'
                         }`}>
                           {iq.status}
@@ -355,7 +440,7 @@ const CustomerDetail: React.FC<CustomerDetailProps> = ({ customer: initialCustom
                       <div className="ml-12 flex-1 bg-slate-50 p-4 rounded-xl border border-slate-100 group-hover:border-blue-100 group-hover:bg-blue-50/30 transition-all">
                         <div className="flex items-center justify-between mb-1">
                           <h4 className="text-sm font-bold text-slate-900">{item.title}</h4>
-                          <span className="text-[10px] font-medium text-slate-400">{item.timestamp}</span>
+                          <span className="text-[11px] font-medium text-slate-400">{item.timestamp}</span>
                         </div>
                         <p className="text-xs text-slate-500 font-mono">{item.path}</p>
                       </div>

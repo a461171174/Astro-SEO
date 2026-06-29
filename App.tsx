@@ -27,6 +27,8 @@ import GenericContentEditor from './components/GenericContentEditor';
 import MenuEditor from './components/MenuEditor';
 import StaffManagement from './components/StaffManagement';
 import SEODashboard from './components/SEODashboard';
+import MetafieldManager from './components/MetafieldManager';
+import { UpgradeModal } from './components/UpgradeModal';
 import { Menu, MenuItem, Customer, Product, Collection, EmailCampaign, Blog, BlogSet, Page, Staff } from './types';
 import { ICONS, MOCK_PRODUCTS, MOCK_COLLECTIONS, MOCK_CAMPAIGNS, MOCK_BLOGS, MOCK_BLOG_SETS, MOCK_PAGES, MOCK_MENUS } from './constants';
 import { geminiService } from './services/geminiService';
@@ -96,17 +98,69 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [blogs, setBlogs] = useState<Blog[]>([]);
-  const [blogSets, setBlogSets] = useState<BlogSet[]>([]);
-  const [pages, setPages] = useState<Page[]>([]);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_products');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_PRODUCTS;
+  });
+
+  const [collections, setCollections] = useState<Collection[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_collections');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_COLLECTIONS;
+  });
+
+  const [blogs, setBlogs] = useState<Blog[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_blogs');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_BLOGS;
+  });
+
+  const [blogSets, setBlogSets] = useState<BlogSet[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_blogSets');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_BLOG_SETS;
+  });
+
+  const [pages, setPages] = useState<Page[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_pages');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_PAGES;
+  });
+
   const [staff, setStaff] = useState<Staff[]>([]);
   const [productSearchQuery, setProductSearchQuery] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('全部');
-  const [activeView, setActiveView] = useState('主页');
+  const [activeView, setActiveView] = useState('站点启动清单');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [compareCustomers, setCompareCustomers] = useState<Customer[]>([]);
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
@@ -114,10 +168,43 @@ const App: React.FC = () => {
   const [isAIChatOpen, setIsAIChatOpen] = useState(false);
   const [initialAIMessage, setInitialAIMessage] = useState('');
   const [currentStore, setCurrentStore] = useState('Happy Paws');
-  const [brandName, setBrandName] = useState('');
-  const [seoStrategy, setSeoStrategy] = useState('');
-  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([]);
-  const [customPrompts, setCustomPrompts] = useState<any>({});
+
+  const [brandName, setBrandName] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('seo_brandName');
+      if (cached) return cached;
+    } catch (e) {}
+    return 'Happy Paws';
+  });
+
+  const [seoStrategy, setSeoStrategy] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('seo_strategy');
+      if (cached) return cached;
+    } catch (e) {}
+    return '精益SEO，专注于跨境电商自然流量，打造宠物品牌标杆，在未来6个月实现自然流量环比增长50%';
+  });
+
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_keywords');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return ['Pet Supplies', 'Dog Toys', 'Cat Clothes'];
+  });
+
+  const [customPrompts, setCustomPrompts] = useState<any>(() => {
+    try {
+      const cached = localStorage.getItem('seo_customPrompts');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return {
+      seoAudit: '你是一个顶级的跨境电商SEO专家。请为这个商品/页面/博客提供详细的SEO优化建议与自动修改方案。要求具有极高转化率和搜索友好性。'
+    };
+  });
 
   const stores = [
     { id: '1', name: 'Happy Paws', icon: 'HP', color: 'bg-orange-500' },
@@ -137,7 +224,18 @@ const App: React.FC = () => {
   const [isAddingBlogSet, setIsAddingBlogSet] = useState(false);
   const [editingPage, setEditingPage] = useState<Page | null>(null);
   const [isAddingPage, setIsAddingPage] = useState(false);
-  const [menus, setMenus] = useState<Menu[]>([]);
+
+  const [menus, setMenus] = useState<Menu[]>(() => {
+    try {
+      const cached = localStorage.getItem('seo_menus');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return MOCK_MENUS;
+  });
+
   const [editingMenu, setEditingMenu] = useState<Menu | null>(null);
   const [isAddingMenu, setIsAddingMenu] = useState(false);
   const [blogSubView, setBlogSubView] = useState<'sets' | 'posts'>('sets');
@@ -145,6 +243,40 @@ const App: React.FC = () => {
   const [showImportMenu, setShowImportMenu] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [upgradeFeatureName, setUpgradeFeatureName] = useState('');
+
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const handleQuotaExceeded = () => {
+      setIsQuotaExceeded(true);
+    };
+    window.addEventListener('firestore-quota-exceeded', handleQuotaExceeded);
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isAbortError(event.reason)) {
+        event.preventDefault();
+        console.warn('Unhandled promise rejection (aborted):', event.reason);
+      }
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('firestore-quota-exceeded', handleQuotaExceeded);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -177,14 +309,34 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Firestore Real-time Sync
+  // Firestore Real-time Sync with Local Storage Caching
   useEffect(() => {
     if (!user) return;
 
     const unsubProducts = onSnapshot(
       query(collection(db, 'products'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product)));
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_products')) {
+            localStorage.setItem('seo_seeded_products', 'true');
+            MOCK_PRODUCTS.forEach(async (p) => {
+              try {
+                await setDoc(doc(db, 'products', p.id), cleanObject({
+                  ...p,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed product:', p.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+          setProducts(data);
+          try {
+            localStorage.setItem('seo_products', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'products')
     );
@@ -192,7 +344,27 @@ const App: React.FC = () => {
     const unsubCollections = onSnapshot(
       query(collection(db, 'collections'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setCollections(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Collection)));
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_collections')) {
+            localStorage.setItem('seo_seeded_collections', 'true');
+            MOCK_COLLECTIONS.forEach(async (c) => {
+              try {
+                await setDoc(doc(db, 'collections', c.id), cleanObject({
+                  ...c,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed collection:', c.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Collection));
+          setCollections(data);
+          try {
+            localStorage.setItem('seo_collections', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'collections')
     );
@@ -200,7 +372,27 @@ const App: React.FC = () => {
     const unsubBlogs = onSnapshot(
       query(collection(db, 'blogs'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setBlogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Blog)));
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_blogs')) {
+            localStorage.setItem('seo_seeded_blogs', 'true');
+            MOCK_BLOGS.forEach(async (b) => {
+              try {
+                await setDoc(doc(db, 'blogs', b.id), cleanObject({
+                  ...b,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed blog:', b.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Blog));
+          setBlogs(data);
+          try {
+            localStorage.setItem('seo_blogs', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'blogs')
     );
@@ -208,7 +400,27 @@ const App: React.FC = () => {
     const unsubBlogSets = onSnapshot(
       query(collection(db, 'blogSets'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setBlogSets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BlogSet)));
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_blogSets')) {
+            localStorage.setItem('seo_seeded_blogSets', 'true');
+            MOCK_BLOG_SETS.forEach(async (bs) => {
+              try {
+                await setDoc(doc(db, 'blogSets', bs.id), cleanObject({
+                  ...bs,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed blogSet:', bs.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BlogSet));
+          setBlogSets(data);
+          try {
+            localStorage.setItem('seo_blogSets', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'blogSets')
     );
@@ -216,7 +428,36 @@ const App: React.FC = () => {
     const unsubPages = onSnapshot(
       query(collection(db, 'pages'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setPages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Page)));
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_pages')) {
+            localStorage.setItem('seo_seeded_pages', 'true');
+            MOCK_PAGES.forEach(async (p) => {
+              try {
+                await setDoc(doc(db, 'pages', p.id), cleanObject({
+                  ...p,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed page:', p.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Page));
+          if (!data.some(p => p.id === 'home')) {
+            const homeMock = MOCK_PAGES.find(p => p.id === 'home');
+            if (homeMock) {
+              setDoc(doc(db, 'pages', 'home'), cleanObject({
+                ...homeMock,
+                updatedAt: new Date().toISOString()
+              })).catch(err => console.error('Failed to auto-seed home page:', err));
+            }
+          }
+          setPages(data);
+          try {
+            localStorage.setItem('seo_pages', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'pages')
     );
@@ -224,8 +465,27 @@ const App: React.FC = () => {
     const unsubMenus = onSnapshot(
       query(collection(db, 'menus'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Menu));
-        setMenus(data.length > 0 ? data : MOCK_MENUS);
+        if (snapshot.empty) {
+          if (!localStorage.getItem('seo_seeded_menus')) {
+            localStorage.setItem('seo_seeded_menus', 'true');
+            MOCK_MENUS.forEach(async (m) => {
+              try {
+                await setDoc(doc(db, 'menus', m.id), cleanObject({
+                  ...m,
+                  updatedAt: new Date().toISOString()
+                }));
+              } catch (err) {
+                console.error('Failed to seed menu:', m.id, err);
+              }
+            });
+          }
+        } else {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Menu));
+          setMenus(data.length > 0 ? data : MOCK_MENUS);
+          try {
+            localStorage.setItem('seo_menus', JSON.stringify(data));
+          } catch (e) {}
+        }
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'menus')
     );
@@ -238,20 +498,45 @@ const App: React.FC = () => {
       (error) => handleFirestoreError(error, OperationType.LIST, 'staff')
     );
 
-    const unsubBrand = onSnapshot(doc(db, 'seoConfigs', 'global'), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
+    const unsubBrand = onSnapshot(doc(db, 'seoConfigs', 'global'), (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const data = docSnapshot.data();
         setBrandName(data.brandName || '');
         setSeoStrategy(data.strategy || '');
         setSelectedKeywords(data.keywords || []);
+        try {
+          localStorage.setItem('seo_brandName', data.brandName || '');
+          localStorage.setItem('seo_strategy', data.strategy || '');
+          localStorage.setItem('seo_keywords', JSON.stringify(data.keywords || []));
+        } catch (e) {}
+      } else {
+        if (!localStorage.getItem('seo_seeded_global')) {
+          localStorage.setItem('seo_seeded_global', 'true');
+          setDoc(doc(db, 'seoConfigs', 'global'), {
+            brandName: 'Happy Paws',
+            strategy: '精益SEO，专注于跨境电商自然流量，打造宠物品牌标杆，在未来6个月实现自然流量环比增长50%',
+            keywords: ['Pet Supplies', 'Dog Toys', 'Cat Clothes']
+          }).catch(err => console.error('Failed to seed global seoConfig:', err));
+        }
       }
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'seoConfigs/global'));
 
-    const unsubPrompts = onSnapshot(doc(db, 'seoConfigs', 'prompts'), (doc) => {
-      if (doc.exists()) {
-        setCustomPrompts(doc.data());
+    const unsubPrompts = onSnapshot(doc(db, 'seoConfigs', 'prompts'), (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const data = docSnapshot.data();
+        setCustomPrompts(data);
+        try {
+          localStorage.setItem('seo_customPrompts', JSON.stringify(data));
+        } catch (e) {}
+      } else {
+        if (!localStorage.getItem('seo_seeded_prompts')) {
+          localStorage.setItem('seo_seeded_prompts', 'true');
+          setDoc(doc(db, 'seoConfigs', 'prompts'), {
+            seoAudit: '你是一个顶级的跨境电商SEO专家。请为这个商品/页面/博客提供详细的SEO优化建议与自动修改方案。要求具有极高转化率和搜索友好性。'
+          }).catch(err => console.error('Failed to seed prompts seoConfig:', err));
+        }
       }
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'seoConfigs/prompts'));
 
     return () => {
       unsubProducts();
@@ -265,6 +550,62 @@ const App: React.FC = () => {
       unsubPrompts();
     };
   }, [user]);
+
+  // Listen for query parameters to automatically open editor (designed for opening in a new window/tab)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editType = params.get('editType');
+    const editId = params.get('editId');
+    if (!editType || !editId) return;
+
+    let found = false;
+
+    if (editType === 'product' && products.length > 0) {
+      const match = products.find(p => p.id === editId);
+      if (match) {
+        setEditingProduct(match);
+        setActiveView('商品');
+        found = true;
+      }
+    } else if (editType === 'collection' && collections.length > 0) {
+      const match = collections.find(c => c.id === editId);
+      if (match) {
+        setEditingCollection(match);
+        setActiveView('系列');
+        found = true;
+      }
+    } else if (editType === 'blog' && blogs.length > 0) {
+      const match = blogs.find(b => b.id === editId);
+      if (match) {
+        setEditingBlog(match);
+        setActiveView('博客');
+        found = true;
+      }
+    } else if (editType === 'blogSet' && blogSets.length > 0) {
+      const match = blogSets.find(bs => bs.id === editId);
+      if (match) {
+        setEditingBlogSet(match);
+        setActiveView('博客集');
+        setBlogSubView('sets');
+        found = true;
+      }
+    } else if (editType === 'page' && pages.length > 0) {
+      const match = pages.find(p => p.id === editId);
+      if (match) {
+        setEditingPage(match);
+        setActiveView('自定义页面');
+        found = true;
+      }
+    }
+
+    if (found) {
+      // Clear query params to prevent re-triggering
+      const url = new URL(window.location.href);
+      url.searchParams.delete('editType');
+      url.searchParams.delete('editId');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [products, collections, blogs, blogSets, pages]);
 
   const productTabs = ['全部', '草稿', '已上架', '存档'];
 
@@ -294,34 +635,62 @@ const App: React.FC = () => {
   };
 
   const handleSaveProduct = async (p: Product) => {
+    const id = p.id || Date.now().toString();
+    const productData = {
+      ...p,
+      id,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Optimistic update
+    setProducts(prev => {
+      const idx = prev.findIndex(item => item.id === id);
+      const updated = idx !== -1
+        ? prev.map(item => item.id === id ? productData : item)
+        : [productData, ...prev];
+      try {
+        localStorage.setItem('seo_products', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+    setEditingProduct(null);
+    setIsAddingProduct(false);
+
     try {
-      const id = p.id || Date.now().toString();
-      const productData = {
-        ...p,
-        id,
-        updatedAt: new Date().toISOString()
-      };
       await setDoc(doc(db, 'products', id), cleanObject(productData));
-      setEditingProduct(null);
-      setIsAddingProduct(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'products');
+      console.warn('Failed to save product in Firestore, kept locally:', error);
+      handleFirestoreError(error, OperationType.WRITE, `products/${id}`);
     }
   };
 
   const handleSaveCollection = async (c: Collection) => {
+    const id = c.id || Date.now().toString();
+    const collectionData = {
+      ...c,
+      id,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Optimistic update
+    setCollections(prev => {
+      const idx = prev.findIndex(item => item.id === id);
+      const updated = idx !== -1
+        ? prev.map(item => item.id === id ? collectionData : item)
+        : [collectionData, ...prev];
+      try {
+        localStorage.setItem('seo_collections', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+    setEditingCollection(null);
+    setIsAddingCollection(false);
+
     try {
-      const id = c.id || Date.now().toString();
-      const collectionData = {
-        ...c,
-        id,
-        updatedAt: new Date().toISOString()
-      };
       await setDoc(doc(db, 'collections', id), cleanObject(collectionData));
-      setEditingCollection(null);
-      setIsAddingCollection(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'collections');
+      console.warn('Failed to save collection in Firestore, kept locally:', error);
+      handleFirestoreError(error, OperationType.WRITE, `collections/${id}`);
     }
   };
 
@@ -334,9 +703,19 @@ const App: React.FC = () => {
   };
 
   const handleDeleteCollection = async (id: string) => {
+    // Optimistic update
+    setCollections(prev => {
+      const updated = prev.filter(c => c.id !== id);
+      try {
+        localStorage.setItem('seo_collections', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+
     try {
       await deleteDoc(doc(db, 'collections', id));
     } catch (error) {
+      console.warn('Failed to delete collection from Firestore, deleted locally:', error);
       handleFirestoreError(error, OperationType.DELETE, `collections/${id}`);
     }
   };
@@ -352,8 +731,16 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     switch (activeView) {
-      case '主页':
-        return <Home onOpenSettings={() => setIsSettingsOpen(true)} onNavigate={(view) => setActiveView(view)} />;
+      case '站点启动清单':
+        return (
+          <Home 
+            onOpenSettings={(section) => {
+              setSettingsInitialSection(section);
+              setIsSettingsOpen(true);
+            }} 
+            onNavigate={(view) => setActiveView(view)} 
+          />
+        );
       case '商品':
       case '商品管理':
         if (editingProduct || isAddingProduct) {
@@ -399,7 +786,7 @@ const App: React.FC = () => {
                   </button>
                   {showImportMenu && (
                     <div className="absolute top-full right-0 mt-1 w-56 bg-white border border-slate-200 rounded-lg shadow-xl z-30 py-1 overflow-hidden">
-                      <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">主流平台导入</div>
+                      <div className="px-4 py-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">主流平台导入</div>
                       <button onClick={() => handleImport('Shopify')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Shopify 导入</button>
                       <button onClick={() => handleImport('Shopline')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Shopline 导入</button>
                       <button onClick={() => handleImport('Shoplazza')} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Shoplazza 导入</button>
@@ -509,7 +896,7 @@ const App: React.FC = () => {
             columns={[
               { key: 'title', label: '标题' },
               { key: 'status', label: '状态', render: (item) => (
-                <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${
                   item.status === '已发布' ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-600'
                 }`}>
                   {item.status}
@@ -567,7 +954,7 @@ const App: React.FC = () => {
               columns={[
                 { key: 'title', label: '标题' },
                 { key: 'status', label: '状态', render: (item) => (
-                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                  <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${
                     item.status === '已发布' ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-600'
                   }`}>
                     {item.status}
@@ -689,39 +1076,7 @@ const App: React.FC = () => {
           />
         );
       case '扩展字段':
-        return (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h1 className="text-2xl font-bold text-slate-900">扩展字段</h1>
-              <button className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors">
-                <ICONS.Plus className="w-4 h-4" /> 添加字段
-              </button>
-            </div>
-            <div className="space-y-3">
-              {[
-                { name: '材质说明', type: '文本', key: 'material' },
-                { name: '保养指南', type: '富文本', key: 'care_guide' },
-                { name: '产地', type: '选择器', key: 'origin' },
-              ].map(field => (
-                <div key={field.key} className="p-4 border border-slate-200 rounded-xl flex items-center justify-between bg-white hover:border-blue-500 transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
-                      <ICONS.Apps className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900">{field.name}</div>
-                      <div className="text-xs text-slate-500">Key: {field.key} • 类型: {field.type}</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button className="p-2 text-slate-400 hover:text-blue-600 transition-colors"><ICONS.Settings className="w-4 h-4" /></button>
-                    <button className="p-2 text-slate-400 hover:text-red-500 transition-colors"><ICONS.Trash className="w-4 h-4" /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
+        return <MetafieldManager />;
       case '菜单':
         if (editingMenu || isAddingMenu) {
           return (
@@ -807,7 +1162,6 @@ const App: React.FC = () => {
         }
         if (activeView === 'SEO处理') {
           seoTab = 'fix';
-          seoMode = 'list';
         }
         if (activeView === 'SEO博客') seoTab = 'blog';
         if (activeView === '效果分析') seoTab = 'tracking';
@@ -922,9 +1276,22 @@ const App: React.FC = () => {
   };
 
   const handleSetActiveView = (view: string) => {
+    // Check if it's an SEO related view and if the user is on a free plan
+    const isSeoView = view.startsWith('SEO');
+    const isFreePlan = false; // Temporarily disabled upgrade modal for SEO as per user request
+
+    if (isSeoView && isFreePlan) {
+      setUpgradeFeatureName('SEO');
+      setIsUpgradeModalOpen(true);
+      return;
+    }
+
     setActiveView(view);
     if (view === '博客集') {
       setBlogSubView('sets');
+    }
+    if (view === '站点启动清单') {
+      setActiveView('站点启动清单');
     }
     setSelectedCustomer(null); // Reset detail view when switching main views
     setCompareCustomers([]); // Reset compare view when switching main views
@@ -977,6 +1344,17 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <div className="flex h-screen bg-[#F8F9FB] overflow-hidden">
+        {!isOnline && (
+          <div className="fixed top-0 left-0 right-0 z-[10000] bg-amber-500 text-white text-center py-1.5 text-xs font-semibold shadow-md">
+            🔌 您当前处于离线状态。正在使用本地缓存，修改已安全保存在浏览器本地。
+          </div>
+        )}
+        {isQuotaExceeded && (
+          <div className="fixed top-0 left-0 right-0 z-[10000] bg-gradient-to-r from-amber-600 to-orange-600 text-white text-center py-2 px-4 text-xs font-medium shadow-md flex items-center justify-center gap-2">
+            <span>⚠️</span>
+            <span>由于云端 Firestore 免费数据库用量已超限 (Quota Exceeded)，系统已自动切入<b>离线本地浏览器存储</b>。您的所有修改、SEO优化成果均已安全保存在本地！</span>
+          </div>
+        )}
         <Sidebar 
           activeItem={activeView} 
           setActiveItem={handleSetActiveView} 
@@ -992,13 +1370,17 @@ const App: React.FC = () => {
         />
         
         <main className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'ml-[72px]' : 'ml-[240px]'}`}>
-          {activeView !== '主页' && (
+          {activeView !== '站点启动清单' && (
             <Header 
               isAILoading={isAiLoading}
               onAISubmit={(text) => {
                 setInitialAIMessage(text);
                 setIsAIChatOpen(true);
               }} 
+              stores={stores}
+              currentStore={currentStore}
+              onSwitchStore={setCurrentStore}
+              activeView={activeView}
             />
           )}
           
@@ -1034,7 +1416,14 @@ const App: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden p-8 md:p-12">
-                  <Settings onClose={() => setIsSettingsOpen(false)} staffList={staff} />
+                  <Settings 
+                    onClose={() => {
+                      setIsSettingsOpen(false);
+                      setSettingsInitialSection(undefined);
+                    }} 
+                    staffList={staff} 
+                    initialSection={settingsInitialSection}
+                  />
                 </div>
               </motion.div>
             </div>
@@ -1046,6 +1435,12 @@ const App: React.FC = () => {
           setIsOpen={setIsAIChatOpen} 
           initialMessage={initialAIMessage}
           onClearInitialMessage={() => setInitialAIMessage('')}
+        />
+
+        <UpgradeModal 
+          isOpen={isUpgradeModalOpen} 
+          onClose={() => setIsUpgradeModalOpen(false)} 
+          featureName={upgradeFeatureName} 
         />
       </div>
     </ErrorBoundary>

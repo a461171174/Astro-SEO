@@ -253,17 +253,17 @@ const CustomerList: React.FC<CustomerListProps> = ({ onViewDetail, onCompare }) 
                   <td className="p-4">
                     <div className="flex flex-wrap gap-1">
                       {customer.isSubscribed && (
-                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-medium">已订阅</span>
+                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[11px] font-medium">已订阅</span>
                       )}
                       {customer.isInquired && (
-                        <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[10px] font-medium">已询盘</span>
+                        <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[11px] font-medium">已询盘</span>
                       )}
                     </div>
                   </td>
                   <td className="p-4">
                     <div className="flex flex-wrap gap-1">
                       {customer.tags.map(tag => (
-                        <span key={tag} title={tag} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]">
+                        <span key={tag} title={tag} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[11px]">
                           {tag}
                         </span>
                       ))}

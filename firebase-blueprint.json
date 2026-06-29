@@ -94,6 +94,22 @@
       },
       "required": ["title"]
     },
+    "MetafieldDefinition": {
+      "title": "MetafieldDefinition",
+      "description": "A definition for an extended field",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "key": { "type": "string" },
+        "type": { "type": "string" },
+        "target": { "type": "string", "enum": ["商品", "客户"] },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "key", "type", "target"]
+    },
     "User": {
       "title": "User",
       "description": "A user of the system",
@@ -262,6 +278,16 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["strategy", "keywords"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Global store settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "languages": { "type": "array", "items": { "type": "object" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -284,6 +310,10 @@
     "pages": {
       "schema": { "$ref": "Page" },
       "description": "Collection of custom pages"
+    },
+    "metafieldDefinitions": {
+      "schema": { "$ref": "MetafieldDefinition" },
+      "description": "Collection of extended field definitions"
     },
     "users": {
       "schema": { "$ref": "User" },
@@ -324,6 +354,10 @@
     "seoConfigs": {
       "schema": { "$ref": "SEOConfig" },
       "description": "Collection of SEO configurations"
+    },
+    "settings": {
+      "schema": { "$ref": "Setting" },
+      "description": "Collection of global store settings"
     }
   }
 }

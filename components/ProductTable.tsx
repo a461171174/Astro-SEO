@@ -66,7 +66,7 @@ const ProductTable: React.FC<ProductTableProps> = ({ products, onSelectProduct, 
                     {totalStock}件库存，共{p.variants.length}个多规格
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium inline-block border ${
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-medium inline-block border ${
                       p.status === '上架' ? 'bg-green-50 text-green-600 border-green-100' : 
                       p.status === '草稿' ? 'bg-slate-50 text-slate-500 border-slate-100' : 'bg-orange-50 text-orange-600 border-orange-100'
                     }`}>

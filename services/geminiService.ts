@@ -4,10 +4,15 @@ import { isAbortError } from "../utils";
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private model: string = "gemini-3-flash-preview";
+  private model: string = "gemini-3.5-flash";
+  private mode: string = "balanced";
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn('GEMINI_API_KEY is missing. AI features will use fallback responses.');
+    }
+    this.ai = new GoogleGenAI({ apiKey: apiKey || 'dummy-key' });
   }
 
   setModel(modelName: string) {
@@ -16,8 +21,22 @@ export class GeminiService {
     }
   }
 
-  getModel() {
-    return this.model;
+  setMode(mode: string) {
+    if (mode) {
+      this.mode = mode;
+    }
+  }
+
+  private getModeInstruction(): string {
+    switch (this.mode) {
+      case 'seo_first':
+        return 'OPTIMIZATION MODE: SEO FIRST. Focus on keyword density, search intent matching, and ranking weight. Use keywords strategically in titles and descriptions.';
+      case 'creative':
+        return 'OPTIMIZATION MODE: CREATIVE. Focus on high click-through rates (CTR), emotional appeal, and engaging copy that stands out in search results.';
+      case 'balanced':
+      default:
+        return 'OPTIMIZATION MODE: BALANCED. Maintain a professional tone while balancing SEO requirements with high-quality user reading experience.';
+    }
   }
 
   private async callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
@@ -196,8 +215,9 @@ export class GeminiService {
     customPrompt?: string
   ) {
     try {
+      const modeInstruction = this.getModeInstruction();
       const langName = this.getLanguageName(language);
-      const defaultPrompt = `Analyze this ${type} and provide SEO optimized content in ${langName}. 
+      const defaultPrompt = `${modeInstruction}\n\nAnalyze this ${type} and provide SEO optimized content in ${langName}. 
       ${brandName ? `Brand Name: ${brandName}` : ''}
       ${primaryKeyword ? `CRITICAL PRIMARY KEYWORD: "${primaryKeyword}". This keyword MUST be included in the SEO Title and SEO Description.` : ''}
       ${selectedKeywords.length > 0 ? `PRIMARY Core Keywords (PRIORITIZE THESE): ${selectedKeywords.join(', ')}` : ''}
@@ -209,6 +229,7 @@ export class GeminiService {
       3. URL Slug (alphanumeric and hyphens only)
       4. Keywords (array of exactly ${keywordCount} relevant keywords in ${langName}. IMPORTANT: All keywords MUST be in ${langName}. ${langName !== 'Chinese' ? `If input keywords are in Chinese, translate them to ${langName}. Strictly forbidden to output Chinese keywords.` : ''})
       5. Selling Points (array of 3-5 key selling points in ${langName})
+      6. Reasons (object with keys: seoTitle, seoDescription, seoUrl. Each value should be a brief explanation in Chinese of why this optimization was suggested)
       Data: ${JSON.stringify(data)}`;
 
       const prompt = customPrompt 
@@ -227,9 +248,18 @@ export class GeminiService {
               seoDescription: { type: Type.STRING },
               seoUrl: { type: Type.STRING },
               keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-              sellingPoints: { type: Type.ARRAY, items: { type: Type.STRING } }
+              sellingPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+              reasons: {
+                type: Type.OBJECT,
+                properties: {
+                  seoTitle: { type: Type.STRING },
+                  seoDescription: { type: Type.STRING },
+                  seoUrl: { type: Type.STRING }
+                },
+                required: ["seoTitle", "seoDescription", "seoUrl"]
+              }
             },
-            required: ["seoTitle", "seoDescription", "seoUrl", "keywords", "sellingPoints"]
+            required: ["seoTitle", "seoDescription", "seoUrl", "keywords", "sellingPoints", "reasons"]
           }
         }
       }));
@@ -245,7 +275,12 @@ export class GeminiService {
         seoDescription: `Discover our ${title}. We provide excellent quality and professional service to meet your various needs. Learn more details now.`,
         seoUrl: title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
         keywords: Array(keywordCount).fill("High Quality"),
-        sellingPoints: ["Excellent Quality Assurance", "Professional Technical Support", "Competitive Prices"]
+        sellingPoints: ["Excellent Quality Assurance", "Professional Technical Support", "Competitive Prices"],
+        reasons: {
+          seoTitle: "基于产品名称和品牌词进行了优化。",
+          seoDescription: "增加了产品的核心卖点和行动号召。",
+          seoUrl: "使用了更简洁且包含关键词的 URL 结构。"
+        }
       };
     }
   }
@@ -262,8 +297,9 @@ export class GeminiService {
     customPrompt?: string
   ) {
     try {
+      const modeInstruction = this.getModeInstruction();
       const langName = this.getLanguageName(language);
-      const defaultPrompt = `Generate exactly ${keywordCount} highly relevant SEO keywords in ${langName} for this ${type}. 
+      const defaultPrompt = `${modeInstruction}\n\nGenerate exactly ${keywordCount} highly relevant SEO keywords in ${langName} for this ${type}. 
       IMPORTANT: All generated keywords MUST be in ${langName}. ${langName !== 'Chinese' ? `If the input keywords or data are in Chinese, you MUST translate and generate the keywords in ${langName}. Strictly forbidden to output Chinese keywords.` : ''}
       ${brandName ? `Brand Name: ${brandName}` : ''}
       ${selectedKeywords.length > 0 ? `PRIMARY Core Keywords (PRIORITIZE THESE): ${selectedKeywords.join(', ')}` : ''}
@@ -393,16 +429,19 @@ export class GeminiService {
     }
   }
 
-  async modifySectionStyle(section: any, prompt: string) {
+  async modifySectionStyle(section: any, prompt: string, language: string = 'zh-CN') {
     try {
+      const langName = this.getLanguageName(language);
       const systemPrompt = `You are a professional UI/UX designer. The user wants to modify a website section.
       Current section data: ${JSON.stringify(section)}
       User request: "${prompt}"
+      Target Language for text content: ${langName}
       
       Modify the section's content and properties based on the request.
       Return the updated section object. Keep the same structure.
-      Respond in Chinese for any text content.
-      If the user asks for style changes (colors, fonts, layout), update the content properties accordingly.`;
+      IMPORTANT: All text content (titles, subtitles, button text, etc.) MUST be in ${langName}.
+      If the user asks for style changes (colors, fonts, layout), update the content properties accordingly.
+      Ensure the design remains professional and consistent with the request.`;
 
       const response = await this.callWithRetry(() => this.ai.models.generateContent({
         model: this.model,
@@ -425,6 +464,8 @@ export class GeminiService {
                   backgroundColor: { type: Type.STRING },
                   textColor: { type: Type.STRING },
                   padding: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  role: { type: Type.STRING },
                   items: { 
                     type: Type.ARRAY, 
                     items: { 
@@ -433,14 +474,16 @@ export class GeminiService {
                         title: { type: Type.STRING },
                         description: { type: Type.STRING },
                         price: { type: Type.STRING },
-                        image: { type: Type.STRING }
+                        image: { type: Type.STRING },
+                        date: { type: Type.STRING },
+                        logo: { type: Type.STRING }
                       }
                     } 
                   }
                 }
               }
             },
-            required: ["id", "type", "name"]
+            required: ["id", "type", "name", "content"]
           }
         }
       }));
@@ -562,16 +605,19 @@ export class GeminiService {
     }
   }
 
-  async modifyElement(section: any, elementPath: string, prompt: string) {
+  async modifyElement(section: any, elementPath: string, prompt: string, language: string = 'zh-CN') {
     try {
+      const langName = this.getLanguageName(language);
       const systemPrompt = `You are a professional UI/UX designer. The user wants to modify a specific element within a website section.
       Current section data: ${JSON.stringify(section)}
       Element to modify (path in content): "${elementPath}"
       User request: "${prompt}"
+      Target Language for text content: ${langName}
       
       Modify the specific element's content and properties based on the request.
       Return the updated section object. Keep the same structure.
-      Respond in Chinese for any text content.`;
+      IMPORTANT: If the modification involves text, it MUST be in ${langName}.
+      If the user provides new content in the prompt, use it. If they describe a change, generate appropriate content.`;
 
       const response = await this.callWithRetry(() => this.ai.models.generateContent({
         model: this.model,
@@ -714,8 +760,9 @@ export class GeminiService {
     customPrompt?: string
   ) {
     try {
+      const modeInstruction = this.getModeInstruction();
       const langName = this.getLanguageName(language);
-      const defaultPrompt = `Generate a descriptive and SEO-friendly image Alt text in ${langName} for an image on a page titled "${pageTitle}".
+      const defaultPrompt = `${modeInstruction}\n\nGenerate a descriptive and SEO-friendly image Alt text in ${langName} for an image on a page titled "${pageTitle}".
       IMPORTANT: The Alt text MUST be in ${langName}.
       ${brandName ? `Brand Name: ${brandName}` : ''}
       ${selectedKeywords.length > 0 ? `PRIMARY Core Keywords (PRIORITIZE THESE): ${selectedKeywords.join(', ')}` : ''}
@@ -1128,6 +1175,154 @@ export class GeminiService {
     } catch (error) {
       if (!isAbortError(error)) {
         console.error("Gemini Error:", error);
+      }
+      return null;
+    }
+  }
+
+  async generateBlogFAQ(content: string, language: string = 'Chinese') {
+    try {
+      const prompt = `Based on the following blog content, please generate 3 to 5 realistic, helpful, and highly SEO-relevant FAQ (frequently asked questions) items with direct answers.
+      The questions and answers must be in ${language}, matching the language of the source text.
+      Source content:
+      "${content}"
+      
+      Return as a JSON object containing an array of faqItems.`;
+
+      const response = await this.callWithRetry(() => this.ai.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              faqItems: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    question: { type: Type.STRING, description: "A highly relevant question in HTML-safe plain text" },
+                    answer: { type: Type.STRING, description: "Detailed, clear, helpful answer in HTML-safe plain text" }
+                  },
+                  required: ["question", "answer"]
+                }
+              }
+            },
+            required: ["faqItems"]
+          }
+        }
+      }));
+
+      return JSON.parse(response.text);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error("Gemini FAQ Generation Error:", error);
+      }
+      return null;
+    }
+  }
+
+  async generateBlogHowTo(content: string, language: string = 'Chinese') {
+    try {
+      const prompt = `Based on the following blog content, please generate a practical, step-by-step How-To guide.
+      The guide must include a name/title for the guide, a concise description, and 3 to 5 clear, sequential steps showing readers how to achieve a main task discussed in the article.
+      All text must be in ${language}, matching the language of the source text.
+      Source content:
+      "${content}"
+      
+      Return as a JSON object.`;
+
+      const response = await this.callWithRetry(() => this.ai.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              howToName: { type: Type.STRING, description: "Main title of the How-To guide" },
+              howToDescription: { type: Type.STRING, description: "Concise summary introducing the how-to process" },
+              howToDuration: { type: Type.STRING, description: "Schema-compliant duration string, e.g., PT15M or PT30M" },
+              howToSteps: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING, description: "Name of this step" },
+                    text: { type: Type.STRING, description: "Detailed instruction details for this step" }
+                  },
+                  required: ["name", "text"]
+                }
+              }
+            },
+            required: ["howToName", "howToDescription", "howToDuration", "howToSteps"]
+          }
+        }
+      }));
+
+      return JSON.parse(response.text);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error("Gemini How-To Generation Error:", error);
+      }
+      return null;
+    }
+  }
+
+  async analyzeKeywordsAndRecommend(keywords: string, language: string = 'Chinese') {
+    try {
+      const prompt = `You are a professional SEO expert and Keyword Planner tool.
+      Analyze the following core keywords: "${keywords}" (and brand/context if any).
+      Generate 4 to 6 highly valuable long-tail keywords (长尾词) that are deeply relevant to these core keywords, optimal for blog topic selection.
+      For each recommended keyword, estimate realistic, data-informed metrics:
+      1. Search Volume (平均每月搜索量, e.g., a number like 4500, 24000, 320, etc.)
+      2. Competition Level (竞争度等级, must be "低" | "中" | "高" if language is Chinese, or "Low" | "Medium" | "High" if English)
+      3. Three-Month Trend (三个月的变化趋势: an array of 3 numbers representing search volumes or index in the last 3 months, e.g., [120, 150, 180] or [2300, 2100, 2500])
+      4. Top of Page Bid Range (首页竞价最低值最高价, price range string, e.g. "¥1.50 - ¥5.80" or "$0.50 - $2.10")
+      5. User Intent Category (搜索意图: "信息型" / "交易型" / "商业型" depending on the word)
+
+      All texts should be in ${language === 'Chinese' || language === '中文' ? 'Chinese' : 'English'} or match the target language.
+      
+      Return the output as a valid JSON object matching the requested schema.`;
+
+      const response = await this.callWithRetry(() => this.ai.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              recommendations: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    keyword: { type: Type.STRING, description: "The long-tail keyword recommended" },
+                    searchVolume: { type: Type.NUMBER, description: "Estimated average monthly search volume" },
+                    competition: { type: Type.STRING, description: "Competition level, e.g., 低 or 中 or 高 (or Low, Medium, High if English)" },
+                    threeMonthTrend: { 
+                      type: Type.ARRAY, 
+                      items: { type: Type.NUMBER }, 
+                      description: "Array of 3 numbers representing search volume trend over the last 3 months, e.g., [120, 150, 180]" 
+                    },
+                    cpc: { type: Type.STRING, description: "Top of Page Bid Range (首页竞价最低值最高价), e.g., ¥1.50 - ¥5.80" },
+                    intent: { type: Type.STRING, description: "Type of search intent, e.g., 信息型" }
+                  },
+                  required: ["keyword", "searchVolume", "competition", "threeMonthTrend", "cpc", "intent"]
+                }
+              }
+            },
+            required: ["recommendations"]
+          }
+        }
+      }));
+
+      return JSON.parse(response.text);
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error("Gemini Keyword Planner Error:", error);
       }
       return null;
     }

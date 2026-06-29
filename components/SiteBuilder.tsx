@@ -19,7 +19,10 @@ const MOCK_THEMES: Theme[] = [
     sections: [
       { id: 'header', type: 'header', name: '页眉 Logo' },
       { id: 'banner', type: 'banner', name: '英雄横幅' },
+      { id: 'about', type: 'about', name: '关于我们' },
       { id: 'products', type: 'products', name: '精选商品' },
+      { id: 'brands', type: 'brands', name: '合作伙伴' },
+      { id: 'blog', type: 'blog', name: '最新动态' },
       { id: 'footer', type: 'footer', name: '页脚信息' },
     ]
   },
@@ -33,7 +36,10 @@ const MOCK_THEMES: Theme[] = [
     sections: [
       { id: 'header', type: 'header', name: '页眉 Logo' },
       { id: 'banner', type: 'banner', name: '英雄横幅' },
+      { id: 'about', type: 'about', name: '关于我们' },
       { id: 'products', type: 'products', name: '精选商品' },
+      { id: 'brands', type: 'brands', name: '合作伙伴' },
+      { id: 'blog', type: 'blog', name: '最新动态' },
       { id: 'reviews', type: 'reviews', name: '客户评价' },
       { id: 'footer', type: 'footer', name: '页脚信息' },
     ]
@@ -100,14 +106,34 @@ const SiteBuilder: React.FC = () => {
   }
 
   return (
-    <div className="max-w-[1200px] mx-auto py-8 px-6 space-y-8 bg-[#F8F9FB] min-h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900">模版库</h1>
-        <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
-          上传文件
-        </button>
-      </div>
+    <div className="h-full overflow-y-auto bg-[#F8F9FB]">
+      <div className="max-w-[1200px] mx-auto py-8 px-6 space-y-8 min-h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-slate-900">模版库</h1>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={async () => {
+                const newId = Date.now().toString();
+                const newTheme = {
+                  ...MOCK_THEMES[1],
+                  id: newId,
+                  name: `新模版 - ${new Date().toLocaleTimeString()}`,
+                  isActive: false,
+                  updatedAt: new Date().toISOString()
+                };
+                await setDoc(doc(db, 'themes', newId), cleanObject(newTheme));
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-2"
+            >
+              <ICONS.Plus className="w-4 h-4" />
+              创建新模版
+            </button>
+            <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
+              上传文件
+            </button>
+          </div>
+        </div>
 
       {/* Current Theme Section */}
       {activeTheme && (
@@ -189,9 +215,9 @@ const SiteBuilder: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-slate-900">{theme.name}</span>
                     {theme.isAI && <span className="text-blue-500 text-xs">✨</span>}
-                    {theme.isActive && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded border border-blue-100">当前使用</span>}
+                    {theme.isActive && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[11px] font-bold rounded border border-blue-100">当前使用</span>}
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-slate-400">
+                  <div className="flex items-center gap-3 text-[11px] text-slate-400">
                     <div className="flex items-center gap-1">
                       当前版本: {theme.version}
                       {theme.hasUpdate && (
@@ -266,6 +292,7 @@ const SiteBuilder: React.FC = () => {
             </motion.div>
           ))}
         </div>
+      </div>
       </div>
     </div>
   );

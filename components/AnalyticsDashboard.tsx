@@ -118,7 +118,7 @@ const AnalyticsDashboard: React.FC = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold text-slate-900">分析</h1>
-          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full border border-blue-100 uppercase tracking-wider">
+          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[11px] font-bold rounded-full border border-blue-100 uppercase tracking-wider">
             实时数据
           </span>
         </div>
@@ -144,7 +144,7 @@ const AnalyticsDashboard: React.FC = () => {
                 <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
                   {stat.icon}
                 </div>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                   stat.trend === 'up' ? 'bg-green-50 text-green-600' : 
                   stat.trend === 'down' ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'
                 }`}>
@@ -165,8 +165,8 @@ const AnalyticsDashboard: React.FC = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourlyData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
                   <Tooltip 
                     cursor={{fill: '#f8fafc'}}
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
@@ -183,8 +183,8 @@ const AnalyticsDashboard: React.FC = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourlyData}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
                   <Tooltip 
                     cursor={{fill: '#f8fafc'}}
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
@@ -203,7 +203,7 @@ const AnalyticsDashboard: React.FC = () => {
           <div className="flex items-center gap-2">
             <div className="w-1 h-4 bg-slate-400 rounded-full" />
             <h2 className="text-base font-bold text-slate-900">历史趋势</h2>
-            <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-full border border-slate-200 uppercase tracking-wider ml-2">
+            <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[11px] font-bold rounded-full border border-slate-200 uppercase tracking-wider ml-2">
               历史数据
             </span>
           </div>
@@ -240,7 +240,7 @@ const AnalyticsDashboard: React.FC = () => {
                     onChange={(e) => setCustomRange(prev => ({ ...prev, start: e.target.value }))}
                     className="bg-transparent border-none text-[11px] font-bold text-slate-700 focus:ring-0 p-0 cursor-pointer"
                   />
-                  <span className="text-slate-300 text-[10px] font-bold mx-1">/</span>
+                  <span className="text-slate-300 text-[11px] font-bold mx-1">/</span>
                   <input 
                     type="date" 
                     value={customRange.end}
@@ -273,8 +273,8 @@ const AnalyticsDashboard: React.FC = () => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
                   <Tooltip 
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   />
@@ -302,8 +302,8 @@ const AnalyticsDashboard: React.FC = () => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#94a3b8'}} />
                   <Tooltip 
                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   />
@@ -325,10 +325,10 @@ const AnalyticsDashboard: React.FC = () => {
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-slate-50/50">
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">商品</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">访问量</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">询盘数</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">转化率</th>
+                  <th className="px-6 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">商品</th>
+                  <th className="px-6 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">访问量</th>
+                  <th className="px-6 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">询盘数</th>
+                  <th className="px-6 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">转化率</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -361,11 +361,11 @@ const AnalyticsDashboard: React.FC = () => {
               <div key={idx} className="p-4 hover:bg-slate-50/50 transition-colors flex items-center justify-between">
                 <div className="flex flex-col">
                   <span className="text-sm font-medium text-slate-700">{page.title}</span>
-                  <span className="text-[10px] text-slate-400 font-mono">{page.path}</span>
+                  <span className="text-[11px] text-slate-400 font-mono">{page.path}</span>
                 </div>
                 <div className="text-right">
                   <span className="text-sm font-bold text-slate-900">{page.visits.toLocaleString()}</span>
-                  <p className="text-[10px] text-slate-400">访问次</p>
+                  <p className="text-[11px] text-slate-400">访问次</p>
                 </div>
               </div>
             ))}
